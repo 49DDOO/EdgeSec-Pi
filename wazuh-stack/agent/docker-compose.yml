@@ -1,0 +1,17 @@
+services:
+  wazuh-agent:
+    build: .
+    container_name: wazuh-llm-agent
+    hostname: wazuh-agent-01
+    restart: unless-stopped
+    environment:
+      - WAZUH_MANAGER=wazuh.manager
+    networks:
+      - wazuh-net
+
+# Attach to the network created by Wazuh's official single-node compose,
+# so the agent can resolve `wazuh.manager` by hostname.
+networks:
+  wazuh-net:
+    external: true
+    name: single-node_default

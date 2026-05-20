@@ -1,0 +1,33 @@
+#!/bin/bash
+# Wazuh integrator → POSTs the alert JSON to the LLM bridge.
+#
+# Wazuh calls this script with:
+#   $1 = path to a temp JSON file containing the alert
+#   $2 = api_key from <api_key>...</api_key> in ossec.conf
+#        (forwarded as Bearer to the bridge — bridge enforces WEBHOOK_SECRET)
+#   $3 = hook URL  (from <hook_url> in ossec.conf)
+#
+# Output is captured by Wazuh into /var/ossec/logs/integrations.log.
+set -u
+ALERT_FILE="${1:?alert file missing}"
+API_KEY="${2:-}"
+BRIDGE_PORT="${BRIDGE_PORT:-8001}"
+HOOK_URL="${3:-https://host.docker.internal:${BRIDGE_PORT}/webhook}"
+
+# Build optional Authorization header only when api_key was configured.
+# Wazuh passes literal "-" when <api_key> is absent; treat that as empty too.
+AUTH_HEADER=()
+if [[ -n "${API_KEY}" && "${API_KEY}" != "-" ]]; then
+  AUTH_HEADER=(-H "Authorization: Bearer ${API_KEY}")
+fi
+
+# 10-second hard timeout — never block the integrator daemon, the bridge
+# returns 202 immediately anyway. The bridge uses a local self-signed cert
+# in the default SMB deployment, so curl must allow that certificate here.
+exec curl -sS -m 10 \
+  -k \
+  -H 'Content-Type: application/json' \
+  "${AUTH_HEADER[@]}" \
+  -X POST \
+  --data-binary "@${ALERT_FILE}" \
+  "${HOOK_URL}"

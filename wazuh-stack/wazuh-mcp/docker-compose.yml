@@ -1,0 +1,47 @@
+services:
+  wazuh-mcp:
+    build:
+      context: ../wazuh-mcp-server   # cloned by start-mcp-server.sh
+      dockerfile: Dockerfile
+    container_name: wazuh-mcp-server
+    restart: unless-stopped
+    environment:
+      # ─── Connection to our Wazuh stack ──────────────────────────────
+      # Per the cloned repo's .env.example (NOT what I assumed):
+      #   - WAZUH_HOST takes a full URL with `https://` prefix, not bare host
+      #   - SSL verification flag is WAZUH_VERIFY_SSL, not VERIFY_SSL
+      #   - For self-signed certs (our wazuh-docker default) we need
+      #     WAZUH_ALLOW_SELF_SIGNED=true in addition to VERIFY_SSL=false
+      # When joining `single-node_default` as external, only container_name
+      # is a DNS alias (not the service name), so we use the full container name.
+      WAZUH_HOST: https://single-node-wazuh.manager-1
+      WAZUH_PORT: "55000"
+      WAZUH_USER: ${WAZUH_USER:-wazuh-wui}
+      WAZUH_PASS: ${WAZUH_PASS}
+      WAZUH_VERIFY_SSL: "false"
+      WAZUH_ALLOW_SELF_SIGNED: "true"
+      # Indexer (vulnerability tools require this in 4.8+)
+      WAZUH_INDEXER_HOST: single-node-wazuh.indexer-1
+      WAZUH_INDEXER_PORT: "9200"
+      WAZUH_INDEXER_USER: ${WAZUH_INDEXER_USER:-admin}
+      WAZUH_INDEXER_PASS: ${WAZUH_INDEXER_PASS}
+      # ─── MCP server itself ──────────────────────────────────────────
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "3000"
+      AUTH_MODE: bearer
+      MCP_API_KEY: ${MCP_API_KEY}
+      AUTH_SECRET_KEY: ${MCP_AUTH_SECRET_KEY:-change-me-please-via-openssl-rand-hex-32}
+      ALLOWED_ORIGINS: "http://localhost:${BRIDGE_PORT:-8001},http://host.docker.internal:${BRIDGE_PORT:-8001},https://claude.ai"
+      LOG_LEVEL: "INFO"
+    ports:
+      - "${MCP_HOST_PORT:-3030}:3000"    # host port configurable; default 3030
+                                          # (3000 commonly clashes with dev servers)
+    networks:
+      - wazuh-net
+
+# Attach to the same Docker network Wazuh single-node creates,
+# so we can resolve `wazuh.manager` / `wazuh.indexer` by hostname.
+networks:
+  wazuh-net:
+    external: true
+    name: single-node_default

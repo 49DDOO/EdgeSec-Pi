@@ -1,0 +1,52 @@
+# Runtime secrets and local environment
+.env
+.env.*
+!.env.example
+bridge.env
+wazuh-llm-bridge/.env
+wazuh-llm-bridge/org_profile.yaml
+wazuh-stack/wazuh-mcp/.env
+wazuh-stack/wazuh-docker/.env
+
+# Local databases, generated tokens, and runtime state
+data/
+wazuh-llm-bridge/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pid
+*.log
+.admin_token_secret
+.fuse_hidden*
+
+# Logs and generated diagnostics
+logs/
+scripts/logs/
+scripts/certs/
+wazuh-stack/logs/
+wazuh-stack/setup.log
+
+# Python / virtualenv
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Cloned third-party repositories and generated Wazuh runtime trees
+wazuh-stack/wazuh-docker/
+wazuh-stack/wazuh-mcp-server/
+
+# Local editor / assistant state
+.DS_Store
+.claude/
+.continue/
+CLAUDE.md
+AGENTS.md
+
+# Generated business artifacts
+EdgeSec-Pi-Partner-Brief.html

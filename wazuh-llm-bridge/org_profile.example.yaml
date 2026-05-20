@@ -1,0 +1,32 @@
+org:
+  name: Example SMB
+  industry: retail
+  primary_timezone: Asia/Taipei
+  description: Local business using EdgeSec-Pi for security alert triage.
+
+assets:
+  - pattern: POS-*
+    role: Store POS terminal
+    owner: Store manager
+    criticality: high
+    business_hours: Daily 09:00-22:00 Asia/Taipei
+    pci_scope: true
+    notes: Handles checkout and card payment workflow.
+
+  - pattern: OFFICE-*
+    role: Office workstation
+    owner: Admin team
+    criticality: medium
+    business_hours: Mon-Fri 09:00-18:00 Asia/Taipei
+    pci_scope: false
+    notes: Used for documents, email, and internal admin tools.
+
+users: []
+
+risk_notes:
+  - Payment-related endpoints have higher business impact.
+  - After-hours login attempts should be treated as suspicious unless scheduled.
+
+escalation_hints:
+  - For high-risk events, notify the business owner and IT contact immediately.
+  - If the source is external and clearly malicious, blocking the source IP is usually the first containment step.
