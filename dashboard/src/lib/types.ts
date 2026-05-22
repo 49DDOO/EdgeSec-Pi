@@ -14,6 +14,7 @@ export interface Alert {
   business_impact: string;
   recommended_action: string;
   status: AlertStatus;
+  purpose?: string;
 }
 
 export interface Endpoint {

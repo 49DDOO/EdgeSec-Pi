@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { Header } from "@/components/dashboard/header";
-import { RiskOverview } from "@/components/dashboard/risk-overview";
+import { ExecutiveSummary } from "@/components/dashboard/executive-summary";
+import { ActionableAlerts } from "@/components/dashboard/actionable-alerts";
+import { DeviceStatus } from "@/components/dashboard/device-status";
 import { AlertTrendChart } from "@/components/dashboard/alert-trend-chart";
 import { AlertsTable } from "@/components/dashboard/alerts-table";
 import { EndpointsMonitor } from "@/components/dashboard/endpoints-monitor";
@@ -18,7 +20,7 @@ import {
   mockAlertTrends,
 } from "@/lib/mock-data";
 import type { Alert, AlertStatus, NotificationConfig } from "@/lib/types";
-import { LayoutDashboard, AlertCircle, Server, Settings } from "lucide-react";
+import { LayoutDashboard, AlertCircle, Server, Settings, Wrench } from "lucide-react";
 
 export default function DashboardPage() {
   const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
@@ -47,9 +49,9 @@ export default function DashboardPage() {
       />
 
       <main className="container mx-auto px-4 py-6 md:px-6">
-        <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-flex">
-            <TabsTrigger value="overview" className="gap-2">
+        <Tabs defaultValue="boss" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-flex">
+            <TabsTrigger value="boss" className="gap-2">
               <LayoutDashboard className="size-4" />
               <span className="hidden sm:inline">總覽</span>
             </TabsTrigger>
@@ -64,7 +66,11 @@ export default function DashboardPage() {
             </TabsTrigger>
             <TabsTrigger value="endpoints" className="gap-2">
               <Server className="size-4" />
-              <span className="hidden sm:inline">端點</span>
+              <span className="hidden sm:inline">設備</span>
+            </TabsTrigger>
+            <TabsTrigger value="it" className="gap-2">
+              <Wrench className="size-4" />
+              <span className="hidden sm:inline">IT 詳細</span>
             </TabsTrigger>
             <TabsTrigger value="system" className="gap-2">
               <Settings className="size-4" />
@@ -72,28 +78,41 @@ export default function DashboardPage() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-6">
+          {/* 老闆視角 - 簡單明瞭 */}
+          <TabsContent value="boss" className="space-y-6">
+            <ExecutiveSummary data={mockRiskSummary} alerts={alerts} />
             <div className="grid gap-6 lg:grid-cols-2">
-              <RiskOverview data={mockRiskSummary} />
-              <AlertTrendChart data={mockAlertTrends} />
-            </div>
-            <div className="grid gap-6 lg:grid-cols-2">
-              <AlertsTable
-                alerts={alerts.filter((a) => a.status === "pending").slice(0, 3)}
+              <ActionableAlerts
+                alerts={alerts}
                 onStatusChange={handleStatusChange}
               />
-              <EndpointsMonitor endpoints={mockEndpoints.slice(0, 4)} />
+              <DeviceStatus endpoints={mockEndpoints} />
             </div>
           </TabsContent>
 
+          {/* 告警頁面 - 簡化版 */}
           <TabsContent value="alerts">
+            <ActionableAlerts
+              alerts={alerts}
+              onStatusChange={handleStatusChange}
+            />
+          </TabsContent>
+
+          {/* 設備狀態 */}
+          <TabsContent value="endpoints">
+            <DeviceStatus endpoints={mockEndpoints} />
+          </TabsContent>
+
+          {/* IT 詳細視角 - 保留技術細節 */}
+          <TabsContent value="it" className="space-y-6">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <AlertTrendChart data={mockAlertTrends} />
+              <EndpointsMonitor endpoints={mockEndpoints} />
+            </div>
             <AlertsTable alerts={alerts} onStatusChange={handleStatusChange} />
           </TabsContent>
 
-          <TabsContent value="endpoints">
-            <EndpointsMonitor endpoints={mockEndpoints} />
-          </TabsContent>
-
+          {/* 系統設定 */}
           <TabsContent value="system">
             <SystemStatus
               health={mockSystemHealth}

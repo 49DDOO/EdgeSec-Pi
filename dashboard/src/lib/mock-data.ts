@@ -13,6 +13,7 @@ export const mockAlerts: Alert[] = [
     business_impact: "可能導致伺服器被入侵，造成資料外洩或服務中斷",
     recommended_action: "1. 確認是否為合法使用者\n2. 若非合法存取，建議封鎖來源 IP\n3. 考慮啟用 fail2ban",
     status: "pending",
+    purpose: "公司官網主機",
   },
   {
     id: "alert-002",
@@ -26,6 +27,7 @@ export const mockAlerts: Alert[] = [
     business_impact: "系統帳號可能被竄改，影響存取控制",
     recommended_action: "1. 檢查修改內容\n2. 確認變更來源\n3. 必要時還原備份",
     status: "pending",
+    purpose: "公司檔案伺服器",
   },
   {
     id: "alert-003",
