@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Header } from "@/components/dashboard/header";
 import { ExecutiveSummary } from "@/components/dashboard/executive-summary";
 import { ActionableAlerts } from "@/components/dashboard/actionable-alerts";
 import { DeviceStatus } from "@/components/dashboard/device-status";
@@ -11,6 +10,8 @@ import { EndpointsMonitor } from "@/components/dashboard/endpoints-monitor";
 import { SystemStatus } from "@/components/dashboard/system-status";
 import { NotificationPanel } from "@/components/dashboard/notification-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import {
   mockAlerts,
   mockEndpoints,
@@ -20,7 +21,7 @@ import {
   mockAlertTrends,
 } from "@/lib/mock-data";
 import type { Alert, AlertStatus, NotificationConfig } from "@/lib/types";
-import { LayoutDashboard, AlertCircle, Server, Settings, Wrench } from "lucide-react";
+import { LayoutDashboard, AlertCircle, Server, Settings, Wrench, Bell } from "lucide-react";
 
 export default function DashboardPage() {
   const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
@@ -42,13 +43,35 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header
-        pendingCount={pendingCount}
-        onNotificationClick={() => setNotificationPanelOpen(true)}
-      />
+    <div className="flex h-full flex-col">
+      {/* Page Header */}
+      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
+        <div>
+          <h1 className="text-xl font-semibold">資安總覽</h1>
+          <p className="text-sm text-muted-foreground">
+            查看公司整體資安狀況與待處理事項
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            className="relative"
+            onClick={() => setNotificationPanelOpen(true)}
+          >
+            <Bell className="size-4" />
+            {pendingCount > 0 && (
+              <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
+                {pendingCount}
+              </span>
+            )}
+          </Button>
+          <ThemeToggle />
+        </div>
+      </header>
 
-      <main className="container mx-auto px-4 py-6 md:px-6">
+      {/* Main Content */}
+      <main className="flex-1 overflow-auto p-6">
         <Tabs defaultValue="boss" className="space-y-6">
           <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-flex">
             <TabsTrigger value="boss" className="gap-2">
