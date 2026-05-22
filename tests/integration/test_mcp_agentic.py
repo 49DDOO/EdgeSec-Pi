@@ -176,6 +176,7 @@ def test_mcp_client_token_refresh_enrichment_and_agentic_loop(monkeypatch: pytes
     monkeypatch.setenv("AGENTIC_TEMPERATURE", "0.0")
     monkeypatch.setenv("AGENTIC_NEVER_GROUPS", "sca,ossec")
     monkeypatch.setenv("AGENTIC_FORCE_LEVEL_GTE", "12")
+    monkeypatch.setenv("AGENTIC_BUSINESS_CONTEXT", "false")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "alerts.db"))
 
     modules = fresh_bridge_import(["mcp_client", "agent_loop", "triage_router", "prompting"])

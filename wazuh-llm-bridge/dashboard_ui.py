@@ -239,13 +239,56 @@ def _case_status_label(value: Any) -> tuple[str, str]:
     return labels.get(status, ("待確認", "case-open"))
 
 
-def _case_action_button(alert_id: int, status: str, label: str) -> str:
+def _case_action_button(alert_id: int, status: str, label: str, group_ids: list[int] | None = None) -> str:
+    group_value = ",".join(str(item) for item in (group_ids or []) if item)
     return f"""
     <form method="post" action="/dashboard/alerts/{_esc(alert_id)}/case#today-tasks" class="case-form">
       <input type="hidden" name="status" value="{_esc(status)}">
+      <input type="hidden" name="group_ids" value="{_esc(group_value)}">
       <button type="submit">{_esc(label)}</button>
     </form>
     """
+
+
+def _event_group_key(row: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    ts = float(row.get("received_at") or 0)
+    day = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "unknown-day"
+    agent_name = str(row.get("agent_name") or "未知設備").strip()
+    rule_id = str(row.get("rule_id") or row.get("rule_description") or "unknown-rule").strip()
+    srcip = _srcip(row).strip()
+    account = _event_account(row).strip()
+    indicator = srcip or account or str(row.get("llm_mitre") or "").strip()
+    return day, agent_name, rule_id, account, indicator
+
+
+def _collapse_event_groups(rows: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    ordered = sorted(rows, key=lambda r: r.get("received_at") or 0, reverse=True)
+    for row in ordered:
+        key = _event_group_key(row)
+        row_id = int(row.get("id") or 0)
+        ts = float(row.get("received_at") or 0)
+        group = groups.get(key)
+        if not group:
+            group = dict(row)
+            group["_group_count"] = 0
+            group["_group_ids"] = []
+            group["_group_first_at"] = ts
+            group["_group_last_at"] = ts
+            groups[key] = group
+        group["_group_count"] = int(group.get("_group_count") or 0) + 1
+        if row_id:
+            group["_group_ids"].append(row_id)
+        group["_group_first_at"] = min(float(group.get("_group_first_at") or ts), ts)
+        group["_group_last_at"] = max(float(group.get("_group_last_at") or ts), ts)
+        if str(row.get("case_status") or "").lower() == "in_progress":
+            group["case_status"] = "in_progress"
+
+    def sort_key(row: dict[str, Any]) -> tuple[int, float]:
+        severity = str(row.get("llm_severity") or "").lower()
+        return dashboard_model.SEVERITY_WEIGHT.get(severity, 0), float(row.get("_group_last_at") or row.get("received_at") or 0)
+
+    return sorted(groups.values(), key=sort_key, reverse=True)[:limit]
 
 
 
@@ -277,6 +320,8 @@ def _render_events(rows: list[dict[str, Any]]) -> str:
         steps = _management_steps(row, assignee, ip)
         account = _event_account(row)
         row_id = int(row.get("id") or 0)
+        group_count = int(row.get("_group_count") or 1)
+        group_ids = [int(item) for item in (row.get("_group_ids") or [row_id]) if int(item or 0) > 0]
         case_label, case_class = _case_status_label(row.get("case_status"))
         if has_business_context:
             next_title = f"確認「{account}」是否本人登入" if account else "確認是否為公司操作"
@@ -294,6 +339,20 @@ def _render_events(rows: list[dict[str, Any]]) -> str:
         date_part, _, time_part = event_time.partition(" ")
         severity = dashboard_model.severity_label(sev)
         severity_class = "risk-high" if sev in {"critical", "high"} else ("risk-medium" if sev == "medium" else "risk-info")
+        repeated_html = (
+            f'<span class="repeat-pill">同類事件 {group_count} 次</span>'
+            if group_count > 1
+            else ""
+        )
+        tech_group_html = (
+            f"""
+                <span>同類事件</span><code>{_esc(group_count)} 次，按右側狀態會一起更新</code>
+                <span>最早時間</span><code>{_esc(_fmt_time(row.get("_group_first_at")))}</code>
+                <span>最新時間</span><code>{_esc(_fmt_time(row.get("_group_last_at")))}</code>
+            """
+            if group_count > 1
+            else ""
+        )
         parts.append(f"""
         <article class="cal-task cal-task-{_esc(sev)}">
           <div class="task-time">
@@ -305,6 +364,7 @@ def _render_events(rows: list[dict[str, Any]]) -> str:
               <span class="risk-pill {severity_class}">{_esc(severity)}</span>
               <span>用途：{_esc(service_label)}</span>
               <span>期限 { _esc(due) }</span>
+              {repeated_html}
             </div>
             <h3>{_esc(summary)}</h3>
             <p>{_esc(impact)}</p>
@@ -323,6 +383,7 @@ def _render_events(rows: list[dict[str, Any]]) -> str:
                 <span>指標</span><code>{_esc(ioc_text)}</code>
                 <span>rule.id</span><code>{_esc(row.get("rule_id"))}</code>
                 <span>MITRE</span><code>{_esc(row.get("llm_mitre") or "未標註")}</code>
+                {tech_group_html}
               </div>
             </details>
           </div>
@@ -332,10 +393,10 @@ def _render_events(rows: list[dict[str, Any]]) -> str:
             {f'<a class="owner-link" href="{_esc(profile_url)}">設定業務用途</a>' if not has_business_context else ''}
             <div class="case-status {case_class}">{_esc(case_label)}</div>
             <div class="case-actions" aria-label="更新處理狀態">
-              {_case_action_button(row_id, "normal", "正常操作")}
-              {_case_action_button(row_id, "in_progress", "交給 IT")}
-              {_case_action_button(row_id, "resolved", "已處理")}
-              {_case_action_button(row_id, "false_positive", "誤報")}
+              {_case_action_button(row_id, "normal", "正常操作", group_ids)}
+              {_case_action_button(row_id, "in_progress", "交給 IT", group_ids)}
+              {_case_action_button(row_id, "resolved", "已處理", group_ids)}
+              {_case_action_button(row_id, "false_positive", "誤報", group_ids)}
             </div>
             <div class="reply-note">{_esc(next_note)}</div>
           </div>
@@ -415,7 +476,9 @@ def _format_ip(value: Any) -> str:
     if not raw:
         return "未知"
     try:
-        return str(ipaddress.ip_address(raw))
+        parsed = ipaddress.ip_address(raw)
+        label = str(parsed)
+        return f"本機位址 ({label})" if parsed.is_loopback else label
     except ValueError:
         return raw
 
@@ -424,15 +487,7 @@ def _fallback_agent_role(name: str, os_platform: str) -> str:
     lowered = f"{name} {os_platform}".lower()
     if "manager" in lowered or "wazuh.manager" in lowered:
         return "資安監控核心"
-    if "darwin" in lowered or "mac" in lowered or "studio" in lowered:
-        return "管理者或員工工作站"
-    if "pos" in lowered:
-        return "門市 POS / 收銀端點"
-    if "db" in lowered or "database" in lowered:
-        return "資料庫主機"
-    if "web" in lowered:
-        return "網站或對外服務主機"
-    return "某項受監控服務"
+    return "尚未設定用途"
 
 
 
@@ -454,6 +509,8 @@ def _notification_panel() -> str:
     line_tested = bool(notify_channels.get_config("LINE_TESTED_AT"))
     telegram_tested = bool(notify_channels.get_config("TELEGRAM_TESTED_AT"))
     email_tested = bool(notify_channels.get_config("EMAIL_TESTED_AT"))
+    notification_token = admin_token.sign("__notifications__")
+    notification_url = f"/admin/notifications?t={quote(notification_token)}"
     return f"""
     <section class="cal-panel notification-card">
       <div class="cal-panel-head">
@@ -461,7 +518,7 @@ def _notification_panel() -> str:
           <h2>通知設定</h2>
           <p>先確認告警會送到哪裡；這是上線後第一件事。</p>
         </div>
-        <a class="secondary-action" href="/admin/notifications">通知設定</a>
+        <a class="secondary-action" href="{_esc(notification_url)}">通知設定</a>
       </div>
       <div class="notification-list">
         <div><span>LINE</span><strong>{'測試成功' if line_tested else ('待測試' if line_ready else '未設定')}</strong></div>
@@ -780,7 +837,7 @@ def _render_dashboard(
         )[0]
         for agent in endpoint_details
     ]
-    owner_watch_count = int(sev.get("critical", 0) + sev.get("high", 0) + sev.get("medium", 0))
+    owner_watch_count = len(events)
     slack_ready, slack_interactive, line_ready, telegram_ready, email_ready = _notification_status()
     notification_ready = bool(slack_ready or line_ready or telegram_ready or email_ready)
     notification_tested, notification_test_note = _notification_tested_status()
@@ -1019,7 +1076,7 @@ def _render_dashboard(
             <span class="score-label">{_esc(score_label)}</span>
             <h1>{_esc(decision_title)}</h1>
             <p>{_esc(setup_note)}</p>
-            <small>依每台端點分數平均；同一台重複告警只按最高風險扣一次</small>
+            <small>依每台端點分數平均；同類告警合併顯示，端點只按最高風險扣一次</small>
           </div>
           <div class="score-actions">
             <a class="primary-action" href="{_esc(setup_primary_href)}">{_esc(setup_primary_text)}</a>
@@ -1045,7 +1102,7 @@ def _render_dashboard(
           <div class="cal-panel-head">
             <div>
               <h2>待辦事項</h2>
-              <p>只顯示今天需要確認或回報的項目；技術資料預設收起。</p>
+              <p>同一台電腦的同類告警會合併成一張卡；技術資料預設收起。</p>
             </div>
           </div>
           {_render_events(events)}
@@ -1661,6 +1718,10 @@ def _render_dashboard(
   .risk-high {{ background: #fef3f2; color: var(--high); }}
   .risk-medium {{ background: #fffbeb; color: #92400e; }}
   .risk-info {{ background: #eff6ff; color: #1d4ed8; }}
+  .repeat-pill {{
+    display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px; border-radius: 999px;
+    background: var(--surface-muted); color: var(--muted); font-weight: 750;
+  }}
   .task-body h3 {{ margin: 0 0 6px; font-size: 16px; line-height: 1.45; }}
   .task-body p {{ margin: 0; color: var(--muted); font-size: 14px; }}
   .task-action {{
@@ -1743,7 +1804,7 @@ def _render_dashboard(
   .install-menu summary::after {{ content: "⌄"; margin-left: 8px; color: var(--muted); font-size: 12px; }}
   .install-menu[open] summary {{ background: var(--surface-muted); }}
   .download-grid {{
-    position: absolute; top: calc(100% + 8px); right: 0; z-index: 20;
+    position: absolute; top: calc(100% + 8px); left: 0; z-index: 20;
     width: min(560px, calc(100vw - 40px)); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
     background: #ffffff; box-shadow: 0 12px 28px rgba(31,35,40,.14);
@@ -2124,7 +2185,7 @@ async def dashboard(request: Request) -> HTMLResponse:
     # 分 severity 抓，避免大量 info 告警把高風險事件擠出最近列表。
     event_candidates: list[dict[str, Any]] = []
     for severity in ("critical", "high", "medium"):
-        event_candidates.extend(await db.list_alerts(limit=12, severity=severity, active_only=True))
+        event_candidates.extend(await db.list_alerts(limit=60, severity=severity, active_only=True))
     seen: set[int] = set()
     events: list[dict[str, Any]] = []
     for row in sorted(event_candidates, key=lambda r: r.get("received_at") or 0, reverse=True):
@@ -2133,8 +2194,9 @@ async def dashboard(request: Request) -> HTMLResponse:
             continue
         seen.add(row_id)
         events.append(row)
-        if len(events) >= 8:
+        if len(events) >= 120:
             break
+    events = _collapse_event_groups(events, limit=8)
 
     try:
         status = await digest.collect_status()
@@ -2160,6 +2222,15 @@ async def update_dashboard_alert_case(alert_id: int, request: Request) -> Redire
     note = str(form.get("note") or "").strip()
     try:
         await db.update_alert_case(alert_id, status, note, actor="dashboard")
+        raw_group_ids = str(form.get("group_ids") or "").strip()
+        if raw_group_ids:
+            group_ids = [
+                int(part)
+                for part in raw_group_ids.split(",")
+                if part.strip().isdigit()
+            ]
+            if group_ids:
+                await db.update_alert_cases(group_ids, status, note, actor="dashboard")
     except ValueError:
         pass
     return RedirectResponse(url="/dashboard#today-tasks", status_code=303)

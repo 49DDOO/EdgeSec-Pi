@@ -67,10 +67,11 @@ def endpoint_risk_map(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             continue
         severity = str(row.get("llm_severity") or "unclassified").lower()
         current = risks.get(agent_name)
+        count = max(1, int(row.get("_group_count") or 1))
         if not current:
-            risks[agent_name] = {"severity": severity, "count": 1}
+            risks[agent_name] = {"severity": severity, "count": count}
             continue
-        current["count"] = int(current.get("count") or 0) + 1
+        current["count"] = int(current.get("count") or 0) + count
         if SEVERITY_WEIGHT.get(severity, 0) > SEVERITY_WEIGHT.get(str(current.get("severity") or ""), 0):
             current["severity"] = severity
     return risks

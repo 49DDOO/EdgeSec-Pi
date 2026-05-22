@@ -70,6 +70,7 @@ def fresh_bridge_import(module_names: Iterable[str]) -> dict[str, ModuleType]:
         "notify_channels",
         "notification_settings",
         "org_profile",
+        "owner_context",
         "prompting",
         "slack_actions",
         "slack_render",

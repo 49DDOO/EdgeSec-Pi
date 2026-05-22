@@ -1,4 +1,4 @@
-# EdgeSec-Pi — 可選的 LobeChat + Wazuh MCP Server 安裝指南
+# EdgeSec-Pi — 進階選配：LobeChat + Wazuh MCP Server
 
 > 這份文件是 **可選的對話式查詢路線**，不是 EdgeSec-Pi 的主流程。
 > 主流程是 `wazuh-llm-bridge/` 接 Wazuh webhook，產生中文 Dashboard 與 Slack 通知。
@@ -6,11 +6,16 @@
 
 ---
 
-## ⚠️ 關於原始 URL 的說明
+## 適用對象
 
-你提供的網址 `https://lobehub.com/mcp/unmuktoai-wazuh-mcp-server/skill.md` 在抓取時回傳**空內容**——
-LobeHub 該 listing 頁並未實際發布 `skill.md`（404 / 空 body）。
-本指南是從以下三個來源彙整的等效安裝步驟：
+這條路線適合 IT、外包資安人員或熟悉 Wazuh 的管理者。它不是給一般
+公司負責人每天操作的入口。
+
+- 一般使用者：看 EdgeSec-Pi Dashboard 與通知。
+- IT / 外包資安：用 Wazuh Dashboard 或 MCP 深查原始事件、弱點與主機資訊。
+- 高風險處置：封鎖 IP、隔離端點、Active Response 必須先測試與授權。
+
+本指南從以下公開來源整理安裝方式：
 
 1. LobeHub MCP catalog 頁：`https://lobehub.com/mcp/unmuktoai-wazuh-mcp-server`
 2. 上游 GitHub 倉庫：`https://github.com/gensecaihq/Wazuh-MCP-Server` (原 unmuktoai/Wazuh-MCP-Server，已轉移)
@@ -33,7 +38,7 @@ LobeHub 該 listing 頁並未實際發布 `skill.md`（404 / 空 body）。
 ```
 
 LobeChat 是 LobeHub 出的開源對話介面，內建 **MCP Marketplace**，可直接搜尋並掛載 MCP server。
-Wazuh MCP Server 對外暴露一支 `/mcp` 端點，把 48 個安全工具（查告警、查弱點、封 IP、隔離主機…）變成 LLM 可呼叫的 function。
+Wazuh MCP Server 對外暴露 `/mcp` 端點，把查告警、查弱點、封 IP、隔離主機等 Wazuh 操作變成 LLM 可呼叫的工具。
 
 ---
 
@@ -44,7 +49,7 @@ Wazuh MCP Server 對外暴露一支 `/mcp` 端點，把 48 個安全工具（查
 | Docker Engine | 20.10+ |
 | Docker Compose | v2 |
 | 記憶體 | ≥ 4 GB（LobeChat ~1G, Wazuh MCP ~512M, 餘量給 LLM client） |
-| Wazuh Manager | 4.8.0 – 4.14.4，且已啟用 API |
+| Wazuh Manager | 依 Wazuh MCP Server 上游支援版本，且已啟用 API |
 | 一個可呼叫的 LLM（雲端 OpenAI/Anthropic 或本地 Ollama） |
 
 ---
@@ -151,7 +156,7 @@ docker compose up -d
 > 若 LobeChat 跑在 Docker、Wazuh MCP 也跑在 Docker（不同 compose）：
 > 把 `localhost` 改成 `host.docker.internal`（Mac/Windows）或建立共用 docker network。
 
-4. 儲存後在對話視窗右下角的 🧰 工具列會看到 **wazuh**，列出 48 個 tool。
+4. 儲存後在對話視窗右下角的工具列會看到 **wazuh**，列出可用工具。
 5. 開啟一個新對話，左下選 **Enable Tools → wazuh**，就可以自然語言詢問：
 
    - 「列出過去 1 小時 critical 等級的告警」

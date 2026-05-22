@@ -146,7 +146,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert "今日待辦" in dashboard_html
                 assert 'class="score-panel' in dashboard_html
                 assert "健康度" in dashboard_html
-                assert "同一台重複告警只按最高風險扣一次" in dashboard_html
+                assert "同類告警合併顯示" in dashboard_html
                 assert (
                     "執行自我檢查" in dashboard_html
                     or "補端點背景" in dashboard_html

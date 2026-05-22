@@ -72,6 +72,32 @@ def test_stats_separate_open_and_closed_alerts(monkeypatch: pytest.MonkeyPatch, 
 
 
 @pytest.mark.unit
+def test_update_alert_cases_marks_repeated_event_group(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "alerts.db"))
+    db = fresh_bridge_import(["db"])["db"]
+    db.init_db_sync()
+
+    ids = [
+        db._save_alert_sync(
+            {"rule": {"id": "5712"}, "agent": {"name": "PC001"}},
+            "{}",
+            {"severity": "high"},
+            1,
+            None,
+        )
+        for _ in range(3)
+    ]
+
+    changed = db._update_alert_cases_sync(ids, "resolved", "same incident", "test")
+
+    assert changed == 3
+    assert db._list_alerts_sync(10, "high", None, active_only=True) == []
+    rows = db._list_alerts_sync(10, "high", None)
+    assert {row["case_status"] for row in rows} == {"resolved"}
+    assert {row["case_note"] for row in rows} == {"same incident"}
+
+
+@pytest.mark.unit
 def test_existing_database_migrates_case_columns(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     db_path = tmp_path / "legacy-alerts.db"
     with sqlite3.connect(str(db_path)) as conn:

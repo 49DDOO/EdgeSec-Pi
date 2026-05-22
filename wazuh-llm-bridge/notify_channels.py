@@ -17,6 +17,8 @@ from typing import Any
 
 import httpx
 
+import owner_context
+
 
 SETTINGS_PATH = Path(
     os.getenv("NOTIFICATION_SETTINGS_PATH", Path(__file__).parent / "data" / "notification_channels.json")
@@ -57,17 +59,18 @@ def get_config(key: str, default: str = "") -> str:
     return _config(key, default)
 
 
-def _alert_text(parsed: dict[str, Any] | None) -> str:
+def _alert_text(alert: dict[str, Any], parsed: dict[str, Any] | None) -> str:
     data = parsed or {}
     severity = str(data.get("severity") or "unknown").upper()
     summary = data.get("summary_zh") or "EdgeSec-Pi 偵測到一筆資安事件。"
     impact = data.get("impact_zh") or ""
     next_step = data.get("next_step_zh") or ""
-    parts = [f"EdgeSec-Pi 告警 [{severity}]", str(summary)]
+    endpoint_lines = owner_context.management_context_lines(alert, markdown=False)
+    parts = [f"EdgeSec-Pi 告警 [{severity}]", "", "哪台電腦", *endpoint_lines, "", "發生什麼事", str(summary)]
     if impact:
-        parts += ["", f"影響：{impact}"]
+        parts += ["", "不處理的後果", str(impact)]
     if next_step:
-        parts += ["", f"下一步：{next_step}"]
+        parts += ["", "立刻該做的事", str(next_step)]
     return "\n".join(parts)
 
 
@@ -166,7 +169,7 @@ async def send_secondary_notifications(
     parsed: dict[str, Any] | None,
     client: httpx.AsyncClient,
 ) -> dict[str, Any]:
-    text = _alert_text(parsed)
+    text = _alert_text(alert, parsed)
     results: dict[str, Any] = {}
     if line_configured():
         try:

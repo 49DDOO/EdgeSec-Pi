@@ -66,7 +66,7 @@ check_lm_studio() {
   fi
 
   local model_check
-  model_check="$(printf '%s' "$payload" | python3 - "$LM_MODEL" <<'PY' 2>/dev/null || true
+  model_check="$(printf '%s' "$payload" | python3 -c '
 import json
 import sys
 
@@ -79,8 +79,7 @@ elif target in ids or target == "local-model":
     print("FOUND")
 else:
     print("MISSING:" + ",".join(ids[:10]))
-PY
-)"
+' "$LM_MODEL" 2>/dev/null || true)"
 
   case "$model_check" in
     FOUND)

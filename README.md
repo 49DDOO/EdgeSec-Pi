@@ -3,11 +3,37 @@
 EdgeSec-Pi is a local Wazuh alert explanation and response bridge for small
 and medium-sized businesses. It receives Wazuh alerts, summarizes them in
 business-readable Traditional Chinese, stores the history locally, and can send
-Slack notifications with optional response actions.
+LINE, Slack, Telegram, or email notifications with optional response actions.
 
 The project is designed for teams that already like Wazuh's detection depth but
 need a simpler owner-facing workflow: "What happened, how serious is it, and
 what should we do next?"
+
+> Project status: preview / pilot. EdgeSec-Pi is not a SIEM replacement and not
+> a SOC automation platform. Wazuh remains the detection source of truth; this
+> project adds a readable dashboard, notification workflow, and controlled
+> response helpers on top.
+
+## Start Here
+
+If you want to install the whole system from zero, start with one of these:
+
+- **[INSTALL.md — 完整安裝手冊（繁體中文）](INSTALL.md)**
+- **[INSTALL.en.md — Complete Installation Guide (English)](INSTALL.en.md)**
+
+That guide walks through:
+
+1. Installing the EdgeSec-Pi Dashboard / bridge.
+2. Starting a local AI service with LM Studio.
+3. Starting the bundled Wazuh lab stack, or connecting an existing Wazuh.
+4. Setting and testing LINE / Slack / Telegram / Email notifications.
+5. Installing the correct Wazuh Agent package for Windows, macOS Apple silicon,
+   macOS Intel, Debian/Ubuntu, or RPM-based Linux.
+6. Filling endpoint business context.
+7. Running readiness checks.
+
+`SETUP_GUIDE.md` is only for the optional MCP / LobeChat investigation path. It
+is not the main owner-facing installation flow.
 
 ## What This Repository Contains
 
@@ -17,6 +43,7 @@ This repository has three separate parts:
 |------|---------|
 | `wazuh-llm-bridge/` | The main EdgeSec-Pi service. FastAPI receives Wazuh alerts, calls a local LLM, stores results in SQLite, renders the dashboard, and sends Slack messages. |
 | `wazuh-stack/` | A local Wazuh single-node lab stack for demo and testing. Use this when you do not already have Wazuh running. |
+| `INSTALL.md` / `INSTALL.en.md` | Complete from-zero installation guides in Traditional Chinese and English for the main Dashboard / Wazuh / Agent / notification flow. |
 | `install.sh` / `SETUP_GUIDE.md` | Optional LobeChat + Wazuh MCP Server flow. This is not required for the main Slack/dashboard pipeline. |
 
 If you already have a Wazuh manager, you usually only need
@@ -38,9 +65,10 @@ EdgeSec-Pi bridge
     +--> local LLM via LM Studio
     +--> SQLite alert history
     +--> owner dashboard (/dashboard)
-    +--> Slack notification / optional action buttons
+    +--> LINE / Slack / Telegram / email notification
+    +--> optional response buttons
 
-Owner: reads the EdgeSec-Pi dashboard and Slack summaries.
+Owner: reads the EdgeSec-Pi dashboard and notification summaries.
 IT: investigates raw events in Wazuh Dashboard when needed.
 ```
 
@@ -57,11 +85,36 @@ and response layer on top of it.
 | Business summary | Traditional Chinese `summary_zh`, `impact_zh`, and `next_step_zh` for non-SOC users. |
 | IT context | Keeps technical fields such as rule ID, MITRE, IOC, root cause, and raw log. |
 | Dashboard | `/dashboard` shows owner-facing risk state, important events, and system health. |
-| Slack | Incoming webhook or Bot Token + Socket Mode; supports interactive buttons when configured. |
+| Notifications | LINE, Slack, Telegram, or email. Slack Bot Token + Socket Mode enables interactive buttons when configured. |
 | Persistence | SQLite-backed alert history with `/alerts`, `/stats`, and `/status` APIs. |
 | Optional response | Wazuh Active Response helpers for IP block/unblock workflows. Endpoint isolation is pluggable and requires a tested agent-side script. |
 
+## Recommended Owner Flow
+
+For a non-technical company owner, the installation should be operated from the
+Dashboard in this order:
+
+1. **Set up notifications** - LINE, Slack, Telegram, or email. At least one
+   channel must send a successful test message.
+2. **Install or connect Wazuh** - connect an existing Wazuh Manager, or use the
+   bundled Wazuh lab stack for a local pilot.
+3. **Install endpoint agents** - download the OS-specific Wazuh agent from the
+   Dashboard, then verify the endpoint appears online.
+4. **Fill endpoint business context** - add who uses the computer, what process
+   it supports, business hours, and impact level. This helps the LLM explain
+   alerts in business language.
+5. **Wait for notifications** - review alerts in the Dashboard or notification
+   channel; use Wazuh Dashboard / MCP only when deeper IT investigation is
+   needed.
+
+MCP and LobeChat are intentionally not part of this owner flow. They are
+advanced investigation tools for IT or an outsourced security partner.
+
 ## Quick Start
+
+For a complete first-time installation, use [INSTALL.md](INSTALL.md) or
+[INSTALL.en.md](INSTALL.en.md). The short commands below are for users who
+already understand the moving parts.
 
 ### macOS Dashboard installer
 
@@ -162,12 +215,19 @@ can verify the full Wazuh -> bridge -> dashboard/Slack path.
 
 ## Connect an Existing Wazuh Manager
 
-Add an integration on your Wazuh manager:
+For the complete existing-Wazuh procedure, use
+[INSTALL.md](INSTALL.md#b-正式部署版接到既有-wazuh).
+
+At minimum, Wazuh needs both:
+
+1. A forwarder script at `/var/ossec/integrations/custom-llm-bridge`.
+2. A matching `<integration>` block in `ossec.conf`.
 
 ```xml
 <integration>
   <name>custom-llm-bridge</name>
-  <hook_url>http://<bridge-host>:${BRIDGE_PORT}/webhook</hook_url>
+  <hook_url>https://<bridge-host>:${BRIDGE_PORT}/webhook</hook_url>
+  <api_key>same value as WEBHOOK_SECRET</api_key>
   <level>7</level>
   <alert_format>json</alert_format>
 </integration>
@@ -177,7 +237,7 @@ For Docker Desktop on macOS or Windows, a Wazuh container can usually reach the
 host bridge with:
 
 ```text
-http://host.docker.internal:${BRIDGE_PORT}/webhook
+https://host.docker.internal:${BRIDGE_PORT}/webhook
 ```
 
 For Linux hosts, put the bridge and Wazuh manager on a reachable network path
@@ -237,14 +297,23 @@ Run the default test gate:
 ```
 
 The default gate runs deterministic unit and integration tests with fake
-LM Studio / fake MCP services. Real Wazuh, real LM Studio, and Slack checks are
-separate e2e/manual targets; see [TESTING.md](TESTING.md).
+LM Studio / fake MCP services. Real Wazuh, real LM Studio, and real
+notification checks are separate e2e/manual targets; see [TESTING.md](TESTING.md).
+
+## Release Readiness
+
+Before presenting this repository as a public release, read
+[RELEASE_READINESS.md](RELEASE_READINESS.md). It lists the honest product
+boundary, what is ready for a pilot, and what should remain marked as advanced
+or experimental.
 
 ## Documentation
 
 - [wazuh-llm-bridge/README.md](wazuh-llm-bridge/README.md) - bridge design and tuning
 - [wazuh-stack/README.md](wazuh-stack/README.md) - local Wazuh lab setup
+- [INSTALL.md](INSTALL.md) / [INSTALL.en.md](INSTALL.en.md) - complete installation guide
 - [TESTING.md](TESTING.md) - test strategy and commands
+- [RELEASE_READINESS.md](RELEASE_READINESS.md) - release positioning and preflight checks
 - [SETUP_GUIDE.md](SETUP_GUIDE.md) - optional LobeChat + Wazuh MCP Server setup
 - [PARTNER_BRIEF.md](PARTNER_BRIEF.md) - business-facing partner brief
 

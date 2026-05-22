@@ -26,6 +26,7 @@ import httpx
 
 import admin_token
 import org_profile
+import owner_context
 import slack_actions
 
 log = logging.getLogger("wazuh-bridge")
@@ -56,57 +57,18 @@ SEVERITY_TITLE_ZH: dict[str, str] = {
 }
 
 
-CRITICALITY_TITLE_ZH: dict[str, str] = {
-    "critical": "關鍵",
-    "high": "高",
-    "medium": "中",
-    "low": "低",
-}
-
-
-def _agent_name(alert: dict[str, Any]) -> str:
-    return str((alert.get("agent") or {}).get("name") or "未知電腦")
-
-
 def _asset_context(alert: dict[str, Any]) -> dict[str, str]:
     """Boss-facing endpoint context shown at the top of every Slack card."""
-    agent = alert.get("agent") or {}
-    name = _agent_name(alert)
-    ip = str(agent.get("ip") or "").strip()
-    asset = org_profile.find_asset(name) or {}
-    role = str(asset.get("role") or "尚未設定").strip()
-    owner = str(asset.get("owner") or asset.get("responsible") or "尚未指定").strip()
-    criticality_raw = str(asset.get("criticality") or "").strip().lower()
-    criticality = CRITICALITY_TITLE_ZH.get(criticality_raw, criticality_raw or "尚未設定")
-    hours = str(asset.get("business_hours") or "").strip()
-    notes = str(asset.get("notes") or "").strip()
-    if not notes and role == "尚未設定":
-        notes = "尚未填寫，請補上這台電腦的用途與負責人。"
-    elif not notes:
-        notes = "尚未填寫補充說明。"
-    return {
-        "name": name,
-        "ip": ip if ip and ip.lower() != "any" else "",
-        "role": role,
-        "owner": owner,
-        "criticality": criticality,
-        "hours": hours,
-        "notes": notes,
-        "profiled": "yes" if asset else "no",
-    }
+    return owner_context.asset_context(alert)
+
+
+def management_context_lines(alert: dict[str, Any], *, markdown: bool = True) -> list[str]:
+    """Return compact endpoint context for owner-facing notifications."""
+    return owner_context.management_context_lines(alert, markdown=markdown)
 
 
 def _context_markdown(ctx: dict[str, str]) -> str:
-    lines = [
-        f"*電腦：* `{ctx['name']}`" + (f"  IP：`{ctx['ip']}`" if ctx.get("ip") else ""),
-        f"*用途：* {ctx['role']}",
-        f"*負責人：* {ctx['owner']}",
-        f"*重要程度：* {ctx['criticality']}",
-        f"*業務說明：* {ctx['notes']}",
-    ]
-    if ctx.get("hours"):
-        lines.append(f"*使用時段：* {ctx['hours']}")
-    return "\n".join(lines)
+    return owner_context.context_markdown(ctx)
 
 
 def _slack_plain(text: str, limit: int = 130) -> str:

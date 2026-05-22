@@ -47,10 +47,10 @@ def test_quick_slack_card_starts_with_endpoint_business_context(monkeypatch, tmp
 
     assert "boss-mac 需要確認" in header
     assert "CIS_Apple" not in header
-    assert "*電腦：* `boss-mac`" in context
+    assert "*電腦：* boss-mac（IP：192.168.50.80）" in context
     assert "*用途：* 管理者筆電" in context
     assert "*負責人：* Titan" in context
-    assert "*業務說明：* 處理公司帳務與管理後台" in context
+    assert "*說明：* 處理公司帳務與管理後台" in context
     assert "*發生什麼事*" in summary
 
 
@@ -70,7 +70,45 @@ def test_unprofiled_slack_card_explicitly_asks_for_business_context(monkeypatch,
 
     context = payload["attachments"][0]["blocks"][1]["text"]["text"]
     assert "*用途：* 尚未設定" in context
-    assert "請補上這台電腦的用途與負責人" in context
+    assert "尚未設定業務用途" in context
+
+
+@pytest.mark.unit
+def test_owner_context_hides_loopback_ip_and_technical_notes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAZUH_API_PASS", "test-pass")
+    monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
+    modules = fresh_bridge_import(["org_profile", "slack_render"])
+    org_profile = modules["org_profile"]
+    slack_render = modules["slack_render"]
+
+    org_profile.upsert_asset(
+        "titandeacStudio",
+        {
+            "role": "開發者",
+            "criticality": "critical",
+            "business_hours": "Daily 10:30 Asia/Taipei",
+            "notes": "使用者提供的 IP 為 ::1 (localhost / 本機迴圈位址)，不作為實際主機位置判斷。",
+        },
+    )
+
+    payload = slack_render.build_quick_slack_blocks_payload(
+        {
+            "agent": {
+                "name": "titandeacStudio",
+                "ip": "0000:0000:0000:0000:0000:0000:0000:0001",
+            },
+            "rule": {"description": "Network changed"},
+        },
+        {"summary_zh": "開發者電腦的網路狀態發生變更。"},
+    )
+
+    context = payload["attachments"][0]["blocks"][1]["text"]["text"]
+
+    assert "titandeacStudio" in context
+    assert "用途：* 開發者" in context
+    assert "0000:0000" not in context
+    assert "::1" not in context
+    assert "localhost" not in context
 
 
 @pytest.mark.unit

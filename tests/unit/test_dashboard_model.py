@@ -43,6 +43,19 @@ def test_endpoint_score_penalizes_highest_daily_risk_once_per_endpoint() -> None
 
 
 @pytest.mark.unit
+def test_endpoint_risk_map_counts_collapsed_event_groups() -> None:
+    risks = dashboard_model.endpoint_risk_map(
+        [
+            {"agent_name": "PC001", "llm_severity": "medium", "_group_count": 4},
+            {"agent_name": "PC001", "llm_severity": "high", "_group_count": 2},
+        ]
+    )
+
+    assert risks["PC001"]["severity"] == "high"
+    assert risks["PC001"]["count"] == 6
+
+
+@pytest.mark.unit
 def test_endpoint_risk_map_groups_events_by_endpoint_highest_risk() -> None:
     risks = dashboard_model.endpoint_risk_map(
         [

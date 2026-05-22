@@ -396,6 +396,9 @@ def context_for_alert(alert: dict[str, Any]) -> str:
 
     if asset:
         lines.append(f"  Asset role:    {asset.get('role', '?')}")
+        owner = asset.get("owner") or asset.get("responsible") or asset.get("contact")
+        if owner:
+            lines.append(f"  Asset owner:   {owner}")
         lines.append(f"  Criticality:   {asset.get('criticality', '?')}")
         if asset.get("pci_scope"):
             lines.append("  PCI scope:     YES — cardholder data territory")
@@ -436,6 +439,51 @@ def context_for_alert(alert: dict[str, Any]) -> str:
         "do not defer to the static rule level."
     )
     return "\n".join(lines)
+
+
+def routing_context_for_alert(alert: dict[str, Any]) -> dict[str, Any]:
+    """Return compact business flags used by triage routing.
+
+    This is intentionally smaller than context_for_alert(): the router only
+    needs to know whether business context should raise the investigation path,
+    not the full prompt text.
+    """
+    snap = current()
+    org = snap.get("org") or {}
+    agent = (alert.get("agent") or {}).get("name") or ""
+    asset = find_asset(agent)
+    out: dict[str, Any] = {
+        "agent": agent,
+        "profiled": bool(asset),
+        "criticality": "",
+        "pci_scope": False,
+        "off_hours": False,
+        "owner": "",
+    }
+    if not asset:
+        return out
+
+    out["criticality"] = str(asset.get("criticality") or "").strip().lower()
+    out["pci_scope"] = bool(asset.get("pci_scope"))
+    out["owner"] = str(asset.get("owner") or asset.get("responsible") or asset.get("contact") or "").strip()
+
+    when_utc: Optional[datetime] = None
+    ts = alert.get("timestamp")
+    if isinstance(ts, str):
+        try:
+            when_utc = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            when_utc = None
+    if when_utc is None:
+        when_utc = datetime.now(timezone.utc)
+
+    time_status = _check_business_hours(
+        str(asset.get("business_hours") or ""),
+        when_utc,
+        str(org.get("primary_timezone") or "UTC"),
+    )
+    out["off_hours"] = bool(time_status and time_status.is_off_hours)
+    return out
 
 
 # ─── module init ─────────────────────────────────────────────────────────

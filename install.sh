@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# EdgeSec-Pi — one-shot installer for Wazuh MCP Server + LobeChat
+# EdgeSec-Pi — optional advanced installer for Wazuh MCP Server + LobeChat
 # Usage: ./install.sh [--with-lobechat]
+#
+# This is not the main Dashboard / notification installation path. Use
+# scripts/install-dashboard-macos.sh for the owner-facing local dashboard.
 
 set -euo pipefail
 

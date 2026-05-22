@@ -221,6 +221,41 @@ def _update_alert_case_sync(alert_id: int,
         return cur.rowcount > 0
 
 
+def _update_alert_cases_sync(alert_ids: list[int],
+                             status: str,
+                             note: str = "",
+                             actor: str = "dashboard") -> int:
+    normalized = str(status or "").strip().lower()
+    if normalized not in _ALLOWED_CASE_STATUSES:
+        raise ValueError(f"unsupported case status: {status}")
+
+    ids = [int(alert_id) for alert_id in alert_ids if int(alert_id) > 0]
+    if not ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in ids)
+    args: list[Any] = [
+        normalized,
+        str(note or "").strip() or None,
+        str(actor or "dashboard").strip() or "dashboard",
+        time.time(),
+        *ids,
+    ]
+    with _connect() as conn:
+        cur = conn.execute(
+            f"""
+            UPDATE alerts
+               SET case_status = ?,
+                   case_note = ?,
+                   case_actor = ?,
+                   case_updated_at = ?
+             WHERE id IN ({placeholders})
+            """,
+            args,
+        )
+        return cur.rowcount
+
+
 # ─── correlation: find related recent alerts ────────────────────────────
 def _fetch_correlation_context_sync(srcip: str | None,
                                     agent_name: str | None,
@@ -370,6 +405,15 @@ async def update_alert_case(alert_id: int,
                             actor: str = "dashboard") -> bool:
     return await asyncio.to_thread(
         _update_alert_case_sync, alert_id, status, note, actor
+    )
+
+
+async def update_alert_cases(alert_ids: list[int],
+                             status: str,
+                             note: str = "",
+                             actor: str = "dashboard") -> int:
+    return await asyncio.to_thread(
+        _update_alert_cases_sync, alert_ids, status, note, actor
     )
 
 

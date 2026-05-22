@@ -117,7 +117,7 @@ Within ~10 seconds you should:
        (check the Slack channel where you set up the webhook)
 
   3. Find it in the bridge's SQLite history:
-       curl -s "http://localhost:$BRIDGE_PORT/alerts?limit=3" | python3 -m json.tool
+       curl -ks "https://localhost:$BRIDGE_PORT/alerts?limit=3" | python3 -m json.tool
 
 If macOS pops up a "Wazuh Agent wants Full Disk Access" prompt,
 allow it — that's how the agent reads /var/log/* for sudo/auth events.
