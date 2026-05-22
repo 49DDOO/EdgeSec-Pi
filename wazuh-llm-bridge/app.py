@@ -44,7 +44,7 @@ except ImportError:
     pass  # dotenv not installed → caller must export env vars manually
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 import db        # local module: SQLite persistence for alerts + LLM verdicts
 import digest    # local module: daily freshness check (Wazuh ver / CVE feed / agents)
@@ -54,11 +54,11 @@ import triage_router  # local module: Phase 3 — 3-layer routing decision
 import agent_loop     # local module: Phase 3 — tool-using agentic investigation
 import admin_ui       # local module: Phase 4 — /admin browser editor (split from app.py)
 import dashboard_ui   # local module: management-facing /dashboard summary
-import slack_render   # local module: Slack payload builders + send_to_slack (split from app.py)
+import slack_render   # local module: Slack payload builders + send_to_slack
 import notify_channels  # local module: LINE / email owner notifications
 import prompting      # local module: build_prompt + parse_llm_reply + _extract_extra_context (split from app.py)
-import self_test      # local module: management-facing service readiness check
 import active_response_api  # local module: destructive /active-response controls
+import ops_api        # local module: health, query, and admin-triggered ops routes
 import webhook_api    # local module: SIEM alert intake and queue handoff
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -153,6 +153,18 @@ def _log_config() -> None:
         log.info("  ACTIVE_RESPONSE  = ENABLED (token set)")
     else:
         log.info("  ACTIVE_RESPONSE  = disabled (ACTIVE_RESPONSE_TOKEN not set)")
+
+    webhook_secret = bool(os.getenv("WEBHOOK_SECRET", "").strip())
+    bind_host = os.getenv("BRIDGE_BIND_HOST", "").strip()
+    if webhook_secret:
+        log.info("  WEBHOOK_SECRET   = set")
+    else:
+        log.warning("  ⚠  WEBHOOK_SECRET is not set — only safe when the bridge is bound to localhost")
+    if bind_host:
+        log.info("  BRIDGE_BIND_HOST = %s", bind_host)
+    public_url = os.getenv("BRIDGE_PUBLIC_URL", "").strip()
+    if public_url.startswith("http://"):
+        log.warning("  ⚠  BRIDGE_PUBLIC_URL uses plain HTTP; use HTTPS before installing agents from another computer")
 
     # ── Sanity warnings ──
     log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -383,106 +395,5 @@ app = FastAPI(title="SIEM → LM Studio bridge", lifespan=lifespan)
 app.include_router(dashboard_ui.router)     # /dashboard management-facing summary
 app.include_router(admin_ui.router)         # /admin and /admin/quick-add routes
 app.include_router(active_response_api.router)
+app.include_router(ops_api.router)
 app.include_router(webhook_api.router)
-
-
-# ──────────────────────────────────────────────────────────────────────────
-# Routes
-# ──────────────────────────────────────────────────────────────────────────
-@app.get("/health")
-async def health() -> dict[str, Any]:
-    q: asyncio.Queue = app.state.queue
-    return {
-        "status": "ok",
-        "queue_size": q.qsize(),
-        "queue_max": QUEUE_MAXSIZE,
-        "workers": WORKER_COUNT,
-    }
-
-
-@app.post("/test-slack")
-async def test_slack() -> dict[str, Any]:
-    """Fire a canned alert + canned LLM reply at the Slack webhook,
-    skipping Wazuh and LM Studio. Use this to sanity-check Slack wiring
-    before relying on the full pipeline. Returns 200 even if Slack failed
-    (errors are logged); response body tells you what happened."""
-    if not SLACK_WEBHOOK_URL:
-        raise HTTPException(
-            status_code=400,
-            detail="SLACK_WEBHOOK_URL is not set in env. Restart the bridge with it set.",
-        )
-    fake_alert = {
-        "rule": {
-            "id": "5712", "level": 10,
-            "description": "sshd: brute force trying to get access to the system. Non existent user.",
-        },
-        "agent": {"id": "001", "name": "wazuh-agent-01", "ip": "172.18.0.5"},
-        "full_log": (
-            "May 10 17:05:00 wazuh-agent-01 sshd[1234]: Failed password for invalid "
-            "user admin from 192.0.2.111 port 55501 ssh2"
-        ),
-    }
-    fake_parsed = {
-        "severity":     "high",
-        "summary_zh":   "有人從外部 IP（192.0.2.111）不斷用「admin」這個帳號嘗試登入你的伺服器，已連續失敗 8 次以上。",
-        "impact_zh":    "若對方繼續猜下去成功登入，可能會進入系統竊取或破壞資料、安裝後門程式。",
-        "next_step_zh": "請聯絡 IT 把 192.0.2.111 這個 IP 暫時封鎖，並確認沒有任何人不小心成功登入。",
-        "root_cause":   "SSH brute-force from external IP targeting non-existent user 'admin'.",
-        "iocs":         ["192.0.2.111", "admin"],
-        "action":       "Block 192.0.2.111 at the firewall; verify no successful auths from that IP in the last 24h; consider disabling SSH password auth in favour of keys.",
-        "mitre":        "T1110",
-    }
-    async with httpx.AsyncClient() as client:
-        await slack_render.send_to_slack(fake_alert, fake_parsed, client)
-    return {"sent": True, "webhook": SLACK_WEBHOOK_URL[:40] + "…"}
-
-
-@app.get("/alerts")
-async def get_alerts(limit: int = 50,
-                     severity: Optional[str] = None,
-                     rule_id: Optional[str] = None) -> list[dict[str, Any]]:
-    """Recent alerts, newest first.
-    Query params: ?limit=N&severity=high&rule_id=5712
-
-    NOTE: `Optional[str]` not `str | None` because FastAPI evaluates query
-    param annotations at startup, and PEP-604 union syntax requires Python
-    3.10+. We support 3.9 (default macOS Python) too.
-    """
-    limit = max(1, min(int(limit), 500))
-    return await db.list_alerts(limit=limit, severity=severity, rule_id=rule_id)
-
-
-@app.get("/stats")
-async def get_stats() -> dict[str, Any]:
-    """Aggregate counts: total, last 24h, by severity, top rules, avg latency."""
-    return await db.compute_stats()
-
-
-@app.get("/status")
-async def get_status() -> dict[str, Any]:
-    """Freshness check — what version of Wazuh is running, when did the CVE
-    feed last update, are all agents online, what was the 24h alert volume.
-
-    This is the on-demand JSON form of the daily Slack digest. Curl it
-    anytime to see the same picture without waiting for 09:00."""
-    return await digest.collect_status()
-
-
-@app.get("/self-test")
-async def get_self_test() -> dict[str, Any]:
-    """Management-facing readiness check.
-
-    Returns Chinese summaries that answer "can I rely on this system right
-    now?" without requiring terminal access or Wazuh knowledge.
-    """
-    queue = getattr(app.state, "queue", None)
-    queue_size = queue.qsize() if queue else 0
-    queue_max = getattr(queue, "maxsize", 0) or 0
-    return await self_test.run_self_test(queue_size=queue_size, queue_max=queue_max)
-
-
-@app.post("/test-digest")
-async def test_digest() -> dict[str, Any]:
-    """Fire a freshness digest at Slack right now (instead of waiting for
-    09:00). Returns the same data so you can verify formatting."""
-    return await digest.send_digest(SLACK_WEBHOOK_URL)

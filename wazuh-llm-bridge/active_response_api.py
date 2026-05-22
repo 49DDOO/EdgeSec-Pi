@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 from typing import Any
 
 import httpx
@@ -41,7 +42,7 @@ def _require_ar_token(request: Request) -> None:
             ),
         )
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer ") or auth[7:] != token:
+    if not auth.startswith("Bearer ") or not secrets.compare_digest(auth[7:], token):
         raise HTTPException(status_code=401, detail="invalid bearer token")
 
 

@@ -14,7 +14,7 @@ Threat model:
   • Anyone holding a valid token can quick-add/edit the agent in the
     `agent` field, but NOT other agents — the form binds to the token's
     agent claim.
-  • Tokens expire after TOKEN_TTL_S (default 30 min). Slack history
+  • Tokens expire after TOKEN_TTL_S (default 15 min). Slack history
     leaking the URL is bearable: by the time it's read, it's likely expired.
   • Falls back to HTTP Basic Auth when no token is present — internal
     IT can still hit /admin/quick-add directly without needing a token.
@@ -33,10 +33,9 @@ from pathlib import Path
 
 log = logging.getLogger("admin-token")
 
-# 30 min default — long enough for management to see a Slack alert and
-# click the link, but short enough that a leaked Slack history
-# isn't a long-term risk.
-TOKEN_TTL_S = int(os.getenv("ADMIN_TOKEN_TTL_S", "1800"))
+# 15 min default — enough for a fresh alert click, but short enough that a
+# copied Slack/LINE URL is not useful for long.
+TOKEN_TTL_S = int(os.getenv("ADMIN_TOKEN_TTL_S", "900"))
 
 # Secret resolution: env var > on-disk file > generated and persisted.
 # Persisting to disk means restarts don't invalidate outstanding Slack links.

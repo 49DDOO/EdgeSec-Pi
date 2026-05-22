@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import smtplib
 import ssl
@@ -19,15 +20,31 @@ import httpx
 
 import owner_context
 
+log = logging.getLogger("notify-channels")
 
 SETTINGS_PATH = Path(
     os.getenv("NOTIFICATION_SETTINGS_PATH", Path(__file__).parent / "data" / "notification_channels.json")
 )
 
 
+def _warn_if_settings_permissions_insecure() -> None:
+    try:
+        mode = SETTINGS_PATH.stat().st_mode & 0o777
+    except OSError:
+        return
+    if mode & 0o077:
+        log.warning(
+            "notification settings file %s is readable by group/others (mode %03o); "
+            "run chmod 600 because it may contain Slack, LINE, Telegram, or SMTP secrets",
+            SETTINGS_PATH,
+            mode,
+        )
+
+
 def load_settings() -> dict[str, Any]:
     try:
         if SETTINGS_PATH.exists():
+            _warn_if_settings_permissions_insecure()
             with SETTINGS_PATH.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
                 if isinstance(data, dict):

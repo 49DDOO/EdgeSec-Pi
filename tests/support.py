@@ -69,6 +69,7 @@ def fresh_bridge_import(module_names: Iterable[str]) -> dict[str, ModuleType]:
         "mcp_client",
         "notify_channels",
         "notification_settings",
+        "ops_api",
         "org_profile",
         "owner_context",
         "prompting",

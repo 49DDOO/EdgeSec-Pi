@@ -31,7 +31,13 @@ if [[ -f "$_BRIDGE_ENV" ]]; then
 fi
 
 BRIDGE_DIR="$ROOT/wazuh-llm-bridge"
+_BRIDGE_DOTENV="$BRIDGE_DIR/.env"
+if [[ -f "$_BRIDGE_DOTENV" ]]; then
+  set -a; source "$_BRIDGE_DOTENV"; set +a
+fi
+
 BRIDGE_PORT="${BRIDGE_PORT:-8001}"
+BRIDGE_BIND_HOST="${BRIDGE_BIND_HOST:-0.0.0.0}"
 LM_STUDIO_URL="${LM_STUDIO_URL:-http://localhost:1234/v1/chat/completions}"
 LM_MODEL="${LM_MODEL:-gemma-4-31b-it-mlx}"
 LM_TIMEOUT_S="${LM_TIMEOUT_S:-180}"
@@ -51,6 +57,22 @@ c_log() { printf "\033[1;36m[%s]\033[0m %s\n" "$(date '+%H:%M:%S')" "$*"; }
 c_ok()  { printf "\033[1;32m[✓]\033[0m %s\n" "$*"; }
 c_err() { printf "\033[1;31m[x]\033[0m %s\n" "$*"; }
 c_warn() { printf "\033[1;33m[!]\033[0m %s\n" "$*"; }
+
+bridge_exposes_network() {
+  [[ "$BRIDGE_BIND_HOST" == "0.0.0.0" || "$BRIDGE_BIND_HOST" == "::" || "$BRIDGE_BIND_HOST" == "[::]" ]]
+}
+
+ensure_bridge_security() {
+  if bridge_exposes_network && [[ -z "${WEBHOOK_SECRET:-}" && "${EDGESEC_ALLOW_UNAUTH_WEBHOOK:-}" != "1" ]]; then
+    c_err "refusing to start bridge on $BRIDGE_BIND_HOST without WEBHOOK_SECRET"
+    c_err "Set WEBHOOK_SECRET in wazuh-llm-bridge/.env, then restart."
+    c_err "For a private lab only, override with EDGESEC_ALLOW_UNAUTH_WEBHOOK=1."
+    return 1
+  fi
+  if bridge_exposes_network && [[ "${EDGESEC_ALLOW_UNAUTH_WEBHOOK:-}" == "1" ]]; then
+    c_warn "bridge is exposed on $BRIDGE_BIND_HOST and webhook auth is explicitly disabled"
+  fi
+}
 
 ensure_bridge_https() {
   [[ "$BRIDGE_SCHEME" == "https" ]] || return 0
@@ -131,6 +153,7 @@ cmd_bridge() {
     return 0
   fi
   ensure_bridge_https || return $?
+  ensure_bridge_security || return $?
   if curl -ksS -m 3 "$BRIDGE_SCHEME://localhost:$BRIDGE_PORT/health" 2>/dev/null | grep -q '"status":"ok"'; then
     c_ok "bridge already responding on $BRIDGE_SCHEME://localhost:$BRIDGE_PORT"
     return 0
@@ -140,7 +163,8 @@ cmd_bridge() {
   LM_STUDIO_URL="$LM_STUDIO_URL" \
   LM_MODEL="$LM_MODEL" \
   LM_TIMEOUT_S="$LM_TIMEOUT_S" \
-  nohup python3 -m uvicorn app:app --host 0.0.0.0 --port "$BRIDGE_PORT" "${BRIDGE_SSL_ARGS[@]}" \
+  BRIDGE_BIND_HOST="$BRIDGE_BIND_HOST" \
+  nohup python3 -m uvicorn app:app --host "$BRIDGE_BIND_HOST" --port "$BRIDGE_PORT" "${BRIDGE_SSL_ARGS[@]}" \
     > "$LOGS/bridge.log" 2>&1 &
   echo $! > "$LOGS/bridge.pid"
   sleep 3

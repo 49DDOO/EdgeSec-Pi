@@ -76,7 +76,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
             "checks": [],
         }
 
-    monkeypatch.setattr(bridge.self_test, "run_self_test", fake_self_test)
+    monkeypatch.setattr(bridge.ops_api.self_test, "run_self_test", fake_self_test)
 
     async def fake_collect_status() -> dict[str, Any]:
         return {
@@ -136,6 +136,16 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert health["status"] == "ok"
                 assert health["queue_max"] == 5
                 assert health["workers"] == 1
+
+                test_slack_unauth = await client.post("/test-slack")
+                assert test_slack_unauth.status_code == 401
+                test_digest_unauth = await client.post("/test-digest")
+                assert test_digest_unauth.status_code == 401
+                test_slack_auth = await client.post(
+                    "/test-slack",
+                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
+                )
+                assert test_slack_auth.status_code == 400
 
                 self_test = (await client.get("/self-test")).json()
                 assert self_test["overall"] == "ok"
