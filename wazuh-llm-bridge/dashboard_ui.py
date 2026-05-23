@@ -18,6 +18,7 @@ import db
 router = APIRouter()
 
 DASHBOARD_V2_URL = os.getenv("DASHBOARD_V2_URL", "http://127.0.0.1:3000").rstrip("/")
+PERMANENT_REDIRECT = 301
 
 _PATH_BY_LEGACY_VIEW = {
     "today": "/",
@@ -40,12 +41,12 @@ def _dashboard_v2_redirect_url(request: Request) -> str:
 
 @router.get("/", include_in_schema=False)
 async def root(request: Request) -> RedirectResponse:
-    return RedirectResponse(url=_dashboard_v2_redirect_url(request))
+    return RedirectResponse(url=_dashboard_v2_redirect_url(request), status_code=PERMANENT_REDIRECT)
 
 
 @router.get("/dashboard", include_in_schema=False)
 async def dashboard(request: Request) -> RedirectResponse:
-    return RedirectResponse(url=_dashboard_v2_redirect_url(request))
+    return RedirectResponse(url=_dashboard_v2_redirect_url(request), status_code=PERMANENT_REDIRECT)
 
 
 @router.post("/dashboard/alerts/{alert_id}/case", include_in_schema=False)

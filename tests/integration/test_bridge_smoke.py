@@ -173,8 +173,12 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert self_test["overall"] == "ok"
                 assert self_test["title_zh"] == "系統可以正常使用"
 
+                root_redirect = await client.get("/", follow_redirects=False)
+                assert root_redirect.status_code == 301
+                assert root_redirect.headers["location"] == "http://127.0.0.1:3000/"
+
                 dashboard_redirect = await client.get("/dashboard", follow_redirects=False)
-                assert dashboard_redirect.status_code == 307
+                assert dashboard_redirect.status_code == 301
                 assert dashboard_redirect.headers["location"] == "http://127.0.0.1:3000/"
 
                 services_redirect = await client.get(
@@ -182,7 +186,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                     params={"view": "services"},
                     follow_redirects=False,
                 )
-                assert services_redirect.status_code == 307
+                assert services_redirect.status_code == 301
                 assert services_redirect.headers["location"] == "http://127.0.0.1:3000/settings/endpoints"
 
                 platform_redirect = await client.get(
@@ -190,7 +194,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                     params={"view": "platform"},
                     follow_redirects=False,
                 )
-                assert platform_redirect.status_code == 307
+                assert platform_redirect.status_code == 301
                 assert platform_redirect.headers["location"] == "http://127.0.0.1:3000/settings/status"
 
                 testing_redirect = await client.get(
@@ -198,8 +202,24 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                     params={"view": "advanced"},
                     follow_redirects=False,
                 )
-                assert testing_redirect.status_code == 307
+                assert testing_redirect.status_code == 301
                 assert testing_redirect.headers["location"] == "http://127.0.0.1:3000/settings/testing"
+
+                notifications_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "notifications"},
+                    follow_redirects=False,
+                )
+                assert notifications_redirect.status_code == 301
+                assert notifications_redirect.headers["location"] == "http://127.0.0.1:3000/settings/notifications"
+
+                invalid_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "invalid"},
+                    follow_redirects=False,
+                )
+                assert invalid_redirect.status_code == 301
+                assert invalid_redirect.headers["location"] == "http://127.0.0.1:3000/"
 
                 dashboard_summary = (await client.get("/api/dashboard/summary")).json()
                 assert set(dashboard_summary) >= {
@@ -259,7 +279,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                     params={"view": "setup"},
                     follow_redirects=False,
                 )
-                assert setup_redirect.status_code == 307
+                assert setup_redirect.status_code == 301
                 assert setup_redirect.headers["location"] == "http://127.0.0.1:3000/settings/status"
 
                 notification_html = (

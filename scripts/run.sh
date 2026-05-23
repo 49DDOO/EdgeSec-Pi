@@ -43,7 +43,7 @@ if [[ -f "$_BRIDGE_DOTENV" ]]; then
 fi
 
 BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-BRIDGE_BIND_HOST="${BRIDGE_BIND_HOST:-0.0.0.0}"
+BRIDGE_BIND_HOST="${BRIDGE_BIND_HOST:-127.0.0.1}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
 DASHBOARD_BIND_HOST="${DASHBOARD_BIND_HOST:-127.0.0.1}"
 DASHBOARD_V2_URL="${DASHBOARD_V2_URL:-http://127.0.0.1:$DASHBOARD_PORT}"
@@ -205,9 +205,12 @@ bridge_exposes_network() {
 }
 
 ensure_bridge_security() {
-  if bridge_exposes_network && [[ -z "${WEBHOOK_SECRET:-}" && "${EDGESEC_ALLOW_UNAUTH_WEBHOOK:-}" != "1" ]]; then
+  local webhook_secret="${WEBHOOK_SECRET:-}"
+  local placeholder_secret=false
+  [[ "$webhook_secret" == "replace-with-a-long-random-secret" ]] && placeholder_secret=true
+  if bridge_exposes_network && [[ ( -z "$webhook_secret" || "$placeholder_secret" == "true" ) && "${EDGESEC_ALLOW_UNAUTH_WEBHOOK:-}" != "1" ]]; then
     c_err "refusing to start bridge on $BRIDGE_BIND_HOST without WEBHOOK_SECRET"
-    c_err "Set WEBHOOK_SECRET in wazuh-llm-bridge/.env, then restart."
+    c_err "Set a real random WEBHOOK_SECRET in wazuh-llm-bridge/.env, then restart."
     c_err "For a private lab only, override with EDGESEC_ALLOW_UNAUTH_WEBHOOK=1."
     return 1
   fi
