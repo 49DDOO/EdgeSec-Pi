@@ -281,10 +281,10 @@ check_advanced_query() {
 }
 
 print_next_steps() {
-  local port url
-  port="$(grep -E '^BRIDGE_PORT=' "$BRIDGE_ENV" | tail -1 | cut -d= -f2-)"
-  port="${port:-8001}"
-  url="https://localhost:$port/dashboard?view=setup"
+  local dashboard_port url
+  dashboard_port="$(grep -E '^DASHBOARD_PORT=' "$BRIDGE_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)"
+  dashboard_port="${dashboard_port:-3000}"
+  url="http://127.0.0.1:$dashboard_port/settings/status"
   echo
   c_ok "EdgeSec-Pi Dashboard is ready"
   echo

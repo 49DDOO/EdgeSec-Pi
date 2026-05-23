@@ -113,6 +113,7 @@ check_env() {
   LM_MODEL="${LM_MODEL:-local-model}"
   WAZUH_API_URL="${WAZUH_API_URL:-https://localhost:55000}"
   MCP_SERVER_URL="${MCP_SERVER_URL:-}"
+  DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
 
   echo "EdgeSec-Pi local environment readiness"
   echo
@@ -124,7 +125,7 @@ check_env() {
   fi
 
   check_http_ok "Bridge health" "$BRIDGE_LOCAL_URL/health" || failures=$((failures + 1))
-  check_http_ok "Dashboard" "$BRIDGE_LOCAL_URL/dashboard" || failures=$((failures + 1))
+  check_http_ok "Dashboard" "http://127.0.0.1:$DASHBOARD_PORT" || failures=$((failures + 1))
   check_http_ok "FastAPI docs" "$BRIDGE_LOCAL_URL/docs" || failures=$((failures + 1))
   check_lm_studio || failures=$((failures + 1))
 

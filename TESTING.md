@@ -60,7 +60,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 RUN_MODEL_TESTS=1 python3 -m pytest -m model te
 This checks the real services configured by `bridge.env`:
 
 - `http://localhost:$BRIDGE_PORT/health`
-- `http://localhost:$BRIDGE_PORT/dashboard`
+- `http://127.0.0.1:3000`
 - `http://localhost:$BRIDGE_PORT/docs`
 - LM Studio `/v1/models` derived from `LM_STUDIO_URL`
 - Wazuh API from `WAZUH_API_URL` when available
@@ -74,7 +74,7 @@ because they may be intentionally disabled for bridge-only development.
 The dashboard also includes a non-technical self-test button:
 
 ```text
-http://localhost:$BRIDGE_PORT/dashboard
+http://127.0.0.1:3000/settings/testing
 ```
 
 It calls:

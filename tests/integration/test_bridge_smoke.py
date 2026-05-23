@@ -112,18 +112,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
             "cve_feed": {"status": "fresh"},
         }
 
-    monkeypatch.setattr(bridge.dashboard_ui.digest, "collect_status", fake_collect_status)
     monkeypatch.setattr(bridge.ops_api.digest, "collect_status", fake_collect_status)
-    monkeypatch.setattr(
-        bridge.dashboard_ui.org_profile,
-        "find_asset",
-        lambda name: {
-            "role": "門市 POS 收銀系統",
-            "criticality": "critical",
-            "business_hours": "Daily 09:00-22:00 Asia/Taipei",
-            "notes": "負責門市交易與發票。",
-            } if name == "test-pos-store-01" else None,
-    )
     monkeypatch.setattr(
         bridge.ops_api.org_profile,
         "find_asset",

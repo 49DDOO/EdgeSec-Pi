@@ -40,7 +40,7 @@ uvicorn app:app --host 0.0.0.0 --port "$BRIDGE_PORT" \
 the bridge see the same service URLs. The shell `source` above is still needed
 for the `uvicorn --port "$BRIDGE_PORT"` argument.
 
-Open the management-facing dashboard at `https://localhost:$BRIDGE_PORT/dashboard`.
+Open the management-facing dashboard at `http://127.0.0.1:3000`.
 
 For local/LAN HTTPS, prefer the wrapper because it generates and trusts the
 local certificate consistently:
@@ -121,7 +121,7 @@ Restart wazuh-manager and tail `/var/ossec/logs/integrations.log`.
 
 - For production, put the bridge behind TLS and set `WEBHOOK_SECRET` so only
   your Wazuh manager can post alerts.
-- Use `/dashboard` for owner-facing summaries and Wazuh Dashboard for IT
+- Use the Next.js Dashboard for owner-facing summaries and Wazuh Dashboard for IT
   investigation.
 - Keep `.env`, `data/`, and logs out of git; copy examples from
   `.env.example` and `../bridge.env.example`.

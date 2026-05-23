@@ -118,7 +118,7 @@ LM_MODEL=gemma-4-31b-it-mlx
 ### 6. 打開 Dashboard
 
 ```text
-https://localhost:8001/dashboard?view=setup
+http://127.0.0.1:3000/settings/status
 ```
 
 第一次進入只照這個順序做：
@@ -236,7 +236,7 @@ environment readiness passed
 再打開：
 
 ```text
-https://localhost:8001/dashboard?view=platform
+http://127.0.0.1:3000/settings/status
 ```
 
 點「立即檢查」。如果顯示「系統可以正常使用」，表示主要服務都通。

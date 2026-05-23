@@ -54,7 +54,7 @@ import mcp_client     # local module: Wazuh MCP Server client (LLM enrichment)
 import triage_router  # local module: Phase 3 — 3-layer routing decision
 import agent_loop     # local module: Phase 3 — tool-using agentic investigation
 import admin_ui       # local module: Phase 4 — /admin browser editor (split from app.py)
-import dashboard_ui   # local module: management-facing /dashboard summary
+import dashboard_ui   # local module: legacy /dashboard redirect compatibility
 import slack_render   # local module: Slack payload builders + send_to_slack
 import notify_channels  # local module: LINE / email owner notifications
 import prompting      # local module: build_prompt + parse_llm_reply + _extract_extra_context (split from app.py)
@@ -405,7 +405,7 @@ app.add_middleware(
     allow_methods=["GET", "PATCH", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
-app.include_router(dashboard_ui.router)     # /dashboard management-facing summary
+app.include_router(dashboard_ui.router)     # /dashboard legacy redirect compatibility
 app.include_router(admin_ui.router)         # /admin and /admin/quick-add routes
 app.include_router(active_response_api.router)
 app.include_router(ops_api.router)
