@@ -262,6 +262,34 @@ async def list_agents() -> list[dict[str, Any]]:
         return r.json().get("data", {}).get("affected_items", [])
 
 
+async def restart_agent(agent_id: str) -> dict[str, Any]:
+    """Ask Wazuh to restart one agent.
+
+    In the dashboard this is presented as "重新檢查這台電腦" because the useful
+    management outcome is a fresh SCA scan. Restarting the agent does not replay
+    old application logs; it makes the agent reload configuration and, when SCA
+    scan_on_start is enabled, run the security configuration assessment again.
+    """
+    agent_id = str(agent_id or "").strip()
+    if not agent_id:
+        raise ValueError("agent_id is required")
+
+    async with httpx.AsyncClient(verify=WAZUH_VERIFY_SSL) as client:
+        for force_refresh in (False, True):
+            token = await _get_jwt(client, force_refresh=force_refresh)
+            r = await client.put(
+                f"{WAZUH_API_URL}/agents/{agent_id}/restart",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            if r.status_code != 401:
+                break
+            log.info("JWT expired, refreshing and retrying agent restart…")
+
+        r.raise_for_status()
+        return r.json()
+
+
 def _as_int(value: Any) -> int:
     try:
         return int(float(value))

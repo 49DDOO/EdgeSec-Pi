@@ -63,6 +63,15 @@ export interface SampleDataReplayResult {
   message: string;
 }
 
+export interface EndpointRecheckResult {
+  ok: boolean;
+  agent_id: string;
+  status: "requested" | string;
+  previous_score?: number | null;
+  previous_last_scan?: string | null;
+  message: string;
+}
+
 const API_BASE = (process.env.NEXT_PUBLIC_BRIDGE_API_BASE || "").replace(/\/$/, "");
 
 function apiUrl(path: string) {
@@ -201,4 +210,15 @@ export async function updateEndpointBusinessContext(
   if (!response.ok) {
     throw new Error(await readError(response));
   }
+}
+
+export async function requestEndpointRecheck(agentId: string): Promise<EndpointRecheckResult> {
+  const response = await fetch(
+    apiUrl(`/api/dashboard/endpoints/${encodeURIComponent(agentId)}/recheck`),
+    { method: "POST" }
+  );
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as EndpointRecheckResult;
 }

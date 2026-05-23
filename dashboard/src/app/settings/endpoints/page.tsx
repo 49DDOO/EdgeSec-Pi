@@ -42,7 +42,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { fetchDashboardSummary, updateEndpointBusinessContext } from "@/lib/api";
+import {
+  fetchDashboardSummary,
+  requestEndpointRecheck,
+  updateEndpointBusinessContext,
+} from "@/lib/api";
+import type { EndpointRecheckResult } from "@/lib/api";
 import type { Endpoint, EndpointBusinessContext, EndpointStatus } from "@/lib/types";
 
 type OsKind = "macos" | "windows" | "debian" | "rpm";
@@ -129,9 +134,17 @@ function SecurityScore({
 function SecurityScoreDialog({
   endpoint,
   onClose,
+  onRecheck,
+  onRefresh,
+  rechecking,
+  recheckResult,
 }: {
   endpoint: Endpoint | null;
   onClose: () => void;
+  onRecheck: (endpoint: Endpoint) => void;
+  onRefresh: () => void;
+  rechecking: boolean;
+  recheckResult?: EndpointRecheckResult & { requestedAt: string };
 }) {
   const score = endpoint?.sca_score;
   const failed = endpoint?.sca?.failed ?? 0;
@@ -142,6 +155,17 @@ function SecurityScoreDialog({
   const failedChecks = endpoint?.sca?.failed_checks ?? [];
   const scoreText = score == null ? "尚未取得" : `${score} / 100`;
   const needsAttention = score != null && score < 80;
+  const previousScore = recheckResult?.previous_score;
+  const hasComparison = typeof previousScore === "number" && typeof score === "number";
+  const scoreDelta = hasComparison ? score - previousScore : null;
+  const comparisonText =
+    scoreDelta == null
+      ? "重新檢查後，回到這裡重新整理分數。"
+      : scoreDelta > 0
+        ? `已提高 ${scoreDelta} 分。`
+        : scoreDelta === 0
+          ? "目前分數尚未提高，可能還在掃描或設定尚未修正。"
+          : `目前比重新檢查前低 ${Math.abs(scoreDelta)} 分，請 IT 查看未通過項目。`;
   const reason =
     score == null
       ? "Wazuh 還沒有回報這台電腦的安全設定檢查結果。通常是 Agent 剛安裝、尚未完成掃描，或 Manager 尚未同步。"
@@ -271,10 +295,47 @@ function SecurityScoreDialog({
                 </div>
               </div>
             </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="text-base font-semibold">處理後怎麼確認</div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                按下後會要求 Wazuh 重新啟動這台 Agent，讓安全設定檢查重新跑一次；通常不會重開電腦，也不會重讀全部舊日誌。
+              </p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">重新檢查前</div>
+                  <div className="text-2xl font-semibold">
+                    {typeof previousScore === "number" ? previousScore : "尚未送出"}
+                  </div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">目前分數</div>
+                  <div className="text-2xl font-semibold">{score == null ? "-" : score}</div>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <div className="text-xs text-muted-foreground">結果</div>
+                  <div className="text-sm font-medium">{comparisonText}</div>
+                </div>
+              </div>
+              {recheckResult ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  已送出：{formatDateTime(recheckResult.requestedAt)}。請等 1 到 5 分鐘後重新整理最新分數。
+                </p>
+              ) : null}
+            </div>
           </div>
         )}
 
         <DialogFooter>
+          {endpoint ? (
+            <Button
+              onClick={() => onRecheck(endpoint)}
+              disabled={rechecking || !endpoint.id}
+            >
+              {rechecking ? "要求中..." : "要求 Wazuh 重新檢查"}
+            </Button>
+          ) : null}
+          <Button variant="outline" onClick={onRefresh}>重新整理分數</Button>
           <Button variant="outline" onClick={onClose}>關閉</Button>
         </DialogFooter>
       </DialogContent>
@@ -322,6 +383,10 @@ export default function EndpointsPage() {
   const [selectedOs, setSelectedOs] = useState<OsKind>("macos");
   const [editing, setEditing] = useState<Endpoint | null>(null);
   const [securityDetails, setSecurityDetails] = useState<Endpoint | null>(null);
+  const [recheckingAgentId, setRecheckingAgentId] = useState<string | null>(null);
+  const [recheckResults, setRecheckResults] = useState<
+    Record<string, EndpointRecheckResult & { requestedAt: string }>
+  >({});
   const [draft, setDraft] = useState(defaultContext);
   const [saving, setSaving] = useState(false);
 
@@ -330,6 +395,10 @@ export default function EndpointsPage() {
     try {
       const summary = await fetchDashboardSummary();
       setEndpoints(summary.endpoints);
+      setSecurityDetails((current) => {
+        if (!current) return null;
+        return summary.endpoints.find((endpoint) => endpoint.id === current.id) || current;
+      });
       if (summary.install?.manager_host) {
         setManagerHost(summary.install.manager_host);
       }
@@ -407,6 +476,34 @@ export default function EndpointsPage() {
   async function copyInstallCommand() {
     await navigator.clipboard.writeText(installCommand(selectedOs, managerHost));
     toast.success("安裝指令已複製");
+  }
+
+  async function recheckEndpoint(endpoint: Endpoint) {
+    if (!endpoint.id) {
+      toast.error("缺少 Agent ID，無法要求 Wazuh 重新檢查");
+      return;
+    }
+    setRecheckingAgentId(endpoint.id);
+    try {
+      const result = await requestEndpointRecheck(endpoint.id);
+      setRecheckResults((current) => ({
+        ...current,
+        [endpoint.id]: {
+          ...result,
+          requestedAt: new Date().toISOString(),
+        },
+      }));
+      toast.success("已要求 Wazuh 重新檢查", {
+        description: result.message,
+      });
+      await loadEndpoints();
+    } catch (error) {
+      toast.error("要求重新檢查失敗", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setRecheckingAgentId(null);
+    }
   }
 
   return (
@@ -690,6 +787,10 @@ export default function EndpointsPage() {
       <SecurityScoreDialog
         endpoint={securityDetails}
         onClose={() => setSecurityDetails(null)}
+        onRecheck={recheckEndpoint}
+        onRefresh={loadEndpoints}
+        rechecking={Boolean(securityDetails?.id && recheckingAgentId === securityDetails.id)}
+        recheckResult={securityDetails?.id ? recheckResults[securityDetails.id] : undefined}
       />
     </div>
   );

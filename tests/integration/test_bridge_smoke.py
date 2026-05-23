@@ -142,8 +142,15 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
     async def fake_agents_from_status() -> list[dict[str, Any]]:
         return (await fake_collect_status())["agents"]["details"]
 
+    restarted_agents: list[str] = []
+
+    async def fake_restart_agent(agent_id: str) -> dict[str, Any]:
+        restarted_agents.append(agent_id)
+        return {"data": {"affected_items": [{"id": agent_id}]}}
+
     monkeypatch.setattr(bridge.ops_api.wazuh, "list_agents", fake_agents_from_status)
     monkeypatch.setattr(bridge.ops_api.wazuh, "get_agent_sca_summary", fake_get_agent_sca_summary)
+    monkeypatch.setattr(bridge.ops_api.wazuh, "restart_agent", fake_restart_agent)
 
     async def scenario() -> None:
         await db.init_db()
@@ -241,6 +248,15 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert endpoint_by_name["unprofiled-agent"]["status"] == "offline"
                 assert endpoint_by_name["unprofiled-agent"]["purpose"] == "尚未設定"
                 assert endpoint_by_name["unprofiled-agent"]["sca_score"] == 44
+
+                recheck_response = await client.post("/api/dashboard/endpoints/001/recheck")
+                assert recheck_response.status_code == 200
+                recheck_payload = recheck_response.json()
+                assert recheck_payload["ok"] is True
+                assert recheck_payload["agent_id"] == "001"
+                assert recheck_payload["previous_score"] == 88
+                assert "重新檢查" in recheck_payload["message"]
+                assert restarted_agents == ["001"]
 
                 quick_add_html = (
                     await client.get(

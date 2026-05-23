@@ -724,6 +724,53 @@ async def get_dashboard_endpoints() -> dict[str, Any]:
     return {"status": status, "endpoints": endpoints}
 
 
+@router.post("/api/dashboard/endpoints/{agent_id}/recheck")
+async def post_endpoint_recheck(agent_id: str) -> dict[str, Any]:
+    """Request a fresh Wazuh agent check for one endpoint.
+
+    This intentionally uses a management-friendly API name. The Wazuh operation
+    underneath is an agent restart, which causes configuration reload and a new
+    SCA run when the agent policy has scan_on_start enabled. It does not promise
+    that old logs are replayed.
+    """
+    agent_id = agent_id.strip()
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="missing agent id")
+    if agent_id == "000":
+        raise HTTPException(status_code=400, detail="manager itself cannot be rechecked this way")
+
+    before: dict[str, Any] = {}
+    try:
+        before = await wazuh.get_agent_sca_summary(agent_id)
+    except Exception as exc:
+        before = {"score": None, "last_scan": "", "available": False, "error": str(exc)}
+
+    try:
+        wazuh_response = await wazuh.restart_agent(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except httpx.HTTPStatusError as exc:
+        detail = str(exc)
+        try:
+            body = exc.response.json()
+            detail = str(body.get("detail") or body.get("message") or body)
+        except Exception:
+            pass
+        raise HTTPException(status_code=502, detail=f"Wazuh 重新檢查請求失敗：{detail}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Wazuh 重新檢查請求失敗：{exc}")
+
+    return {
+        "ok": True,
+        "agent_id": agent_id,
+        "status": "requested",
+        "previous_score": before.get("score"),
+        "previous_last_scan": before.get("last_scan") or "",
+        "message": "已要求 Wazuh 重新檢查這台電腦；分數通常需要 1 到 5 分鐘才會更新。",
+        "wazuh_response": wazuh_response,
+    }
+
+
 @router.put("/api/dashboard/endpoints/{agent_name}/business-context")
 async def put_endpoint_business_context(
     agent_name: str,
