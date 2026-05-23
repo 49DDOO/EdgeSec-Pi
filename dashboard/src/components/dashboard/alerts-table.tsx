@@ -38,7 +38,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { TechnicalAlertDetails } from "@/components/dashboard/technical-alert-details";
 import type { Alert, SeverityLevel, AlertStatus } from "@/lib/types";
-import { severityLabels, statusLabels } from "@/lib/mock-data";
+import { severityLabels, statusLabels } from "@/lib/labels";
 import { toast } from "sonner";
 
 interface AlertsTableProps {

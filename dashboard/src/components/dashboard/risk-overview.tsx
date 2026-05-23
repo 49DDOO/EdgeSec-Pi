@@ -4,7 +4,7 @@ import { AlertTriangle, ShieldAlert, ShieldCheck, Info, TrendingUp, Clock } from
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { RiskSummary } from "@/lib/types";
-import { severityLabels } from "@/lib/mock-data";
+import { severityLabels } from "@/lib/labels";
 
 interface RiskOverviewProps {
   data: RiskSummary;

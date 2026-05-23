@@ -20,13 +20,21 @@ import { toast } from "sonner";
 
 export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
-    fetchDashboardSummary().then((data) => {
-      if (active) setSummary(data);
-    });
+    fetchDashboardSummary()
+      .then((data) => {
+        if (!active) return;
+        setSummary(data);
+        setLoadError(null);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setLoadError(error instanceof Error ? error.message : "Dashboard API 無法連線");
+      });
     return () => {
       active = false;
     };
@@ -94,7 +102,7 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto p-6">
-        {!summary && (
+        {!summary && !loadError && (
           <div className="flex min-h-[360px] items-center justify-center rounded-lg border border-dashed border-border">
             <div className="flex items-center gap-3 text-muted-foreground">
               <Loader2 className="size-5 animate-spin" />
@@ -103,13 +111,15 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {summary?.demo && (
-          <div className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-900 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-200">
-            目前顯示示範資料，尚未連上 8001 橋接服務。請設定{" "}
-            <code className="rounded bg-yellow-100 px-1 dark:bg-yellow-900">
-              NEXT_PUBLIC_BRIDGE_API_BASE
+        {loadError && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
+            <h2 className="text-lg font-semibold text-destructive">Dashboard 資料讀取失敗</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              目前不顯示示範資料，避免誤判正式狀態。請先確認 EdgeSec-Pi bridge 是否正常啟動。
+            </p>
+            <code className="mt-4 block rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+              {loadError}
             </code>
-            ，或由 EdgeSec-Pi 後端服務此 Dashboard。
           </div>
         )}
         {summary && (

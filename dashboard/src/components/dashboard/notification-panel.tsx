@@ -12,7 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { Alert, SeverityLevel } from "@/lib/types";
-import { severityLabels } from "@/lib/mock-data";
+import { severityLabels } from "@/lib/labels";
 import { format } from "date-fns";
 import { zhTW } from "date-fns/locale";
 

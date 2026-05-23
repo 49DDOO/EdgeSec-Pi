@@ -333,9 +333,6 @@ export default function EndpointsPage() {
       if (summary.install?.manager_host) {
         setManagerHost(summary.install.manager_host);
       }
-      if (summary.demo) {
-        toast.warning("目前顯示示範資料", { description: summary.error });
-      }
     } catch (error) {
       toast.error("讀取端點失敗", {
         description: error instanceof Error ? error.message : String(error),
@@ -351,9 +348,6 @@ export default function EndpointsPage() {
         setEndpoints(summary.endpoints);
         if (summary.install?.manager_host) {
           setManagerHost(summary.install.manager_host);
-        }
-        if (summary.demo) {
-          toast.warning("目前顯示示範資料", { description: summary.error });
         }
       })
       .catch((error) => {

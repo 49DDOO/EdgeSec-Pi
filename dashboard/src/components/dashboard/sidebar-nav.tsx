@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  Building2,
   Bell,
   Monitor,
   TestTube2,
@@ -28,12 +27,6 @@ const navItems = [
     href: "/",
     icon: LayoutDashboard,
     description: "查看公司整體資安狀況",
-  },
-  {
-    title: "公司設定",
-    href: "/settings/company",
-    icon: Building2,
-    description: "公司基本資料與資產清單",
   },
   {
     title: "通知設定",

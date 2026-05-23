@@ -1,11 +1,3 @@
-import {
-  mockAlerts,
-  mockAlertTrends,
-  mockEndpoints,
-  mockNotificationConfig,
-  mockRiskSummary,
-  mockSystemHealth,
-} from "@/lib/mock-data";
 import type {
   Alert,
   AlertStatus,
@@ -77,32 +69,14 @@ function apiUrl(path: string) {
   return `${API_BASE}${path}`;
 }
 
-export function demoDashboardSummary(error?: string): DashboardSummary {
-  return {
-    generated_at: new Date().toISOString(),
-    alerts: mockAlerts,
-    riskSummary: mockRiskSummary,
-    endpoints: mockEndpoints,
-    systemHealth: mockSystemHealth,
-    notifications: mockNotificationConfig,
-    alertTrends: mockAlertTrends,
-    demo: true,
-    error,
-  };
-}
-
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
-  try {
-    const response = await fetch(apiUrl("/api/dashboard/summary"), {
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      throw new Error(`Dashboard API ${response.status}`);
-    }
-    return (await response.json()) as DashboardSummary;
-  } catch (error) {
-    return demoDashboardSummary(error instanceof Error ? error.message : String(error));
+  const response = await fetch(apiUrl("/api/dashboard/summary"), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Dashboard API ${response.status}`);
   }
+  return (await response.json()) as DashboardSummary;
 }
 
 export async function updateAlertStatus(alertId: string, status: AlertStatus): Promise<void> {
