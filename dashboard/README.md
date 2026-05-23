@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EdgeSec-Pi Dashboard
 
-## Getting Started
+This is the management Dashboard for EdgeSec-Pi.
 
-First, run the development server:
+It is a Next.js frontend that talks to the local EdgeSec-Pi bridge API. The
+Dashboard is intentionally separate from the bridge service:
+
+- `dashboard/` renders the management UI.
+- `wazuh-llm-bridge/` receives SIEM alerts, stores data, enriches alerts, and
+  exposes the Dashboard API.
+
+## Development
+
+From the repository root, start the managed local services:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+./scripts/run.sh restart
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The Dashboard runs at:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```text
+http://127.0.0.1:3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The Dashboard API is proxied through:
 
-## Learn More
+```text
+/api/dashboard/*
+```
 
-To learn more about Next.js, take a look at the following resources:
+By default the proxy points to the local bridge:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```text
+https://127.0.0.1:8001
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Checks
 
-## Deploy on Vercel
+```bash
+cd dashboard
+pnpm --config.verify-deps-before-run=false lint
+pnpm --config.verify-deps-before-run=false build
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The full project release check is:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+./scripts/check-quality.sh
+```
+
+## Release Note
+
+This Dashboard is not a standalone SaaS deployment. It needs the EdgeSec-Pi
+bridge, Wazuh, and notification settings to be running in the target local or
+LAN environment.
