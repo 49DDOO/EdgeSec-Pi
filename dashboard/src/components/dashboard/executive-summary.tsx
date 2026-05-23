@@ -1,16 +1,16 @@
 "use client";
 
-import { ShieldCheck, ShieldAlert, AlertTriangle, TrendingDown, TrendingUp, Minus, Clock, Users } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { ShieldCheck, ShieldAlert, AlertTriangle, Minus, Clock } from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type { RiskSummary, Alert } from "@/lib/types";
 
 interface ExecutiveSummaryProps {
   data: RiskSummary;
   alerts: Alert[];
+  endpointCount: number;
 }
 
-export function ExecutiveSummary({ data, alerts }: ExecutiveSummaryProps) {
+export function ExecutiveSummary({ data, alerts, endpointCount }: ExecutiveSummaryProps) {
   const pendingAlerts = alerts.filter((a) => a.status === "pending");
   const criticalPending = pendingAlerts.filter((a) => a.severity === "critical");
   
@@ -121,7 +121,7 @@ export function ExecutiveSummary({ data, alerts }: ExecutiveSummaryProps) {
           </div>
           <div className="text-center">
             <div className="text-sm text-muted-foreground">監控設備</div>
-            <div className="text-2xl font-bold">6 台</div>
+            <div className="text-2xl font-bold">{endpointCount} 台</div>
           </div>
           <div className="text-center">
             <div className="text-sm text-muted-foreground">今日事件</div>

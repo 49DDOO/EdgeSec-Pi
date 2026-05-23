@@ -113,11 +113,15 @@ def normalize_alert(payload: dict[str, Any], source_hint: str = "auto") -> dict[
         alert.setdefault("rule", {})
         alert.setdefault("agent", {})
         alert.setdefault("data", payload.get("data") or {})
+        previous_meta = payload.get("_edgesec") if isinstance(payload.get("_edgesec"), dict) else {}
         alert["_edgesec"] = {
+            **previous_meta,
             "siem_source": "wazuh",
             "siem_product": "Wazuh",
             "normalized": False,
         }
+        if payload.get("@sampledata") is True:
+            alert["_edgesec"]["sampledata"] = True
         return alert
 
     event = payload.get("event") if isinstance(payload.get("event"), dict) else {}

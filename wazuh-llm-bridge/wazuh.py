@@ -23,6 +23,8 @@ from typing import Any, Optional
 
 import httpx
 
+import sca_explainer
+
 log = logging.getLogger("wazuh-api")
 
 WAZUH_API_URL  = os.getenv("WAZUH_API_URL", "https://localhost:55000")
@@ -258,3 +260,122 @@ async def list_agents() -> list[dict[str, Any]]:
         )
         r.raise_for_status()
         return r.json().get("data", {}).get("affected_items", [])
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def list_sca_policies(agent_id: str) -> list[dict[str, Any]]:
+    """Return Security Configuration Assessment policy summaries for an agent.
+
+    Wazuh may return more than one SCA policy per endpoint. The dashboard keeps
+    them separate from agent connectivity because an online agent can still have
+    weak security configuration.
+    """
+    async with httpx.AsyncClient(verify=WAZUH_VERIFY_SSL) as client:
+        token = await _get_jwt(client)
+        r = await client.get(
+            f"{WAZUH_API_URL}/sca/{agent_id}",
+            params={"limit": 100},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json().get("data", {}).get("affected_items", [])
+
+
+async def list_sca_failed_checks(
+    agent_id: str,
+    policy_id: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Return top failed SCA checks for one policy.
+
+    This powers the management dashboard's "why is this score low?" drawer.
+    We intentionally fetch only a few failed checks so the screen gives a next
+    action instead of dumping a CIS benchmark.
+    """
+    if not policy_id:
+        return []
+    async with httpx.AsyncClient(verify=WAZUH_VERIFY_SSL) as client:
+        token = await _get_jwt(client)
+        r = await client.get(
+            f"{WAZUH_API_URL}/sca/{agent_id}/checks/{policy_id}",
+            params={"limit": max(1, min(int(limit), 20)), "result": "failed"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        items = r.json().get("data", {}).get("affected_items", [])
+        checks = []
+        for item in items:
+            checks.append({
+                "id": str(item.get("id") or ""),
+                "title": str(item.get("title") or ""),
+                "rationale": str(item.get("rationale") or ""),
+                "description": str(item.get("description") or ""),
+                "remediation": str(item.get("remediation") or ""),
+            })
+        return checks
+
+
+async def get_agent_sca_summary(agent_id: str) -> dict[str, Any]:
+    """Return the conservative SCA score for one agent.
+
+    If multiple SCA policies exist, the lowest score is shown. For a management
+    dashboard this is easier to trust than an average that can hide a weak
+    policy behind a stronger one.
+    """
+    policies = await list_sca_policies(agent_id)
+    scored: list[dict[str, Any]] = []
+    for policy in policies:
+        score_value = policy.get("score")
+        if score_value is None:
+            continue
+        passed = _as_int(policy.get("pass") or policy.get("passed"))
+        failed = _as_int(policy.get("fail") or policy.get("failed"))
+        invalid = _as_int(policy.get("invalid"))
+        total = _as_int(policy.get("total_checks") or policy.get("total"))
+        if not total:
+            total = passed + failed + invalid
+        scored.append({
+            "score": _as_int(score_value),
+            "policy": str(policy.get("name") or policy.get("policy_id") or ""),
+            "policy_id": str(policy.get("policy_id") or ""),
+            "passed": passed,
+            "failed": failed,
+            "invalid": invalid,
+            "total": total,
+            "last_scan": str(policy.get("end_scan") or policy.get("last_scan") or ""),
+        })
+    if not scored:
+        return {
+            "score": None,
+            "policy": "",
+            "policy_id": "",
+            "passed": 0,
+            "failed": 0,
+            "invalid": 0,
+            "total": 0,
+            "last_scan": "",
+            "available": False,
+        }
+    summary = min(scored, key=lambda item: item["score"])
+    try:
+        failed_checks = await list_sca_failed_checks(
+            agent_id,
+            summary.get("policy_id") or "",
+            limit=5,
+        )
+        summary["failed_checks"] = failed_checks
+        summary["plain_failed_checks"] = await sca_explainer.explain_failed_checks(failed_checks, limit=3)
+    except Exception as exc:
+        log.warning("failed to fetch SCA checks for agent=%s policy=%s: %s", agent_id, summary.get("policy_id"), exc)
+        summary["failed_checks"] = []
+        summary["plain_failed_checks"] = []
+    summary["available"] = True
+    return summary

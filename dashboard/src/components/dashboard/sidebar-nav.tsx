@@ -7,7 +7,9 @@ import {
   Building2,
   Bell,
   Monitor,
+  TestTube2,
   Shield,
+  ServerCog,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -44,6 +46,18 @@ const navItems = [
     href: "/settings/endpoints",
     icon: Monitor,
     description: "監控設備與 Agent 狀態",
+  },
+  {
+    title: "測試中心",
+    href: "/settings/testing",
+    icon: TestTube2,
+    description: "測試通知與 Wazuh Sample Data",
+  },
+  {
+    title: "系統狀態",
+    href: "/settings/status",
+    icon: ServerCog,
+    description: "查看 Bridge、Wazuh、AI 與通知是否正常",
   },
 ];
 
@@ -95,8 +109,8 @@ export function SidebarNav() {
 
           if (collapsed) {
             return (
-              <Tooltip key={item.href} delayDuration={0}>
-                <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
+              <Tooltip key={item.href}>
+                <TooltipTrigger render={linkContent} />
                 <TooltipContent side="right" className="flex flex-col gap-1">
                   <span className="font-medium">{item.title}</span>
                   <span className="text-xs text-muted-foreground">

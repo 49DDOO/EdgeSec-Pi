@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExecutiveSummary } from "@/components/dashboard/executive-summary";
 import { ActionableAlerts } from "@/components/dashboard/actionable-alerts";
 import { DeviceStatus } from "@/components/dashboard/device-status";
@@ -12,34 +12,56 @@ import { NotificationPanel } from "@/components/dashboard/notification-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
-import {
-  mockAlerts,
-  mockEndpoints,
-  mockRiskSummary,
-  mockSystemHealth,
-  mockNotificationConfig,
-  mockAlertTrends,
-} from "@/lib/mock-data";
-import type { Alert, AlertStatus, NotificationConfig } from "@/lib/types";
-import { LayoutDashboard, AlertCircle, Server, Settings, Wrench, Bell } from "lucide-react";
+import { fetchDashboardSummary, updateAlertStatus } from "@/lib/api";
+import type { DashboardSummary } from "@/lib/api";
+import type { AlertStatus } from "@/lib/types";
+import { LayoutDashboard, AlertCircle, Server, Settings, Wrench, Bell, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function DashboardPage() {
-  const [alerts, setAlerts] = useState<Alert[]>(mockAlerts);
-  const [notifications, setNotifications] = useState<NotificationConfig>(mockNotificationConfig);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
 
-  const pendingCount = alerts.filter((a) => a.status === "pending").length;
+  useEffect(() => {
+    let active = true;
+    fetchDashboardSummary().then((data) => {
+      if (active) setSummary(data);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
-  const handleStatusChange = (alertId: string, newStatus: AlertStatus) => {
-    setAlerts((prev) =>
-      prev.map((alert) =>
+  const pendingCount = summary?.alerts.filter((a) => a.status === "pending").length ?? 0;
+
+  const handleStatusChange = async (alertId: string, newStatus: AlertStatus) => {
+    if (!summary) return;
+    const previous = summary;
+    setSummary((prev) => ({
+      ...(prev || previous),
+      alerts: (prev || previous).alerts.map((alert) =>
         alert.id === alertId ? { ...alert, status: newStatus } : alert
-      )
-    );
+      ),
+    }));
+    try {
+      await updateAlertStatus(alertId, newStatus);
+    } catch (error) {
+      setSummary(previous);
+      toast.error("狀態更新失敗", {
+        description: error instanceof Error ? error.message : "請確認橋接服務是否正常",
+      });
+    }
   };
 
-  const handleNotificationChange = (key: keyof NotificationConfig, value: boolean) => {
-    setNotifications((prev) => ({ ...prev, [key]: value }));
+  const handleNotificationChange = (key: keyof DashboardSummary["notifications"], value: boolean) => {
+    setSummary((prev) =>
+      prev
+        ? {
+            ...prev,
+            notifications: { ...prev.notifications, [key]: value },
+          }
+        : prev
+    );
   };
 
   return (
@@ -72,6 +94,25 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto p-6">
+        {!summary && (
+          <div className="flex min-h-[360px] items-center justify-center rounded-lg border border-dashed border-border">
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+              正在讀取 Dashboard 資料...
+            </div>
+          </div>
+        )}
+
+        {summary?.demo && (
+          <div className="mb-4 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-900 dark:border-yellow-900 dark:bg-yellow-950/30 dark:text-yellow-200">
+            目前顯示示範資料，尚未連上 8001 橋接服務。請設定{" "}
+            <code className="rounded bg-yellow-100 px-1 dark:bg-yellow-900">
+              NEXT_PUBLIC_BRIDGE_API_BASE
+            </code>
+            ，或由 EdgeSec-Pi 後端服務此 Dashboard。
+          </div>
+        )}
+        {summary && (
         <Tabs defaultValue="boss" className="space-y-6">
           <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-flex">
             <TabsTrigger value="boss" className="gap-2">
@@ -103,53 +144,58 @@ export default function DashboardPage() {
 
           {/* 老闆視角 - 簡單明瞭 */}
           <TabsContent value="boss" className="space-y-6">
-            <ExecutiveSummary data={mockRiskSummary} alerts={alerts} />
+            <ExecutiveSummary
+              data={summary.riskSummary}
+              alerts={summary.alerts}
+              endpointCount={summary.endpoints.length}
+            />
             <div className="grid gap-6 lg:grid-cols-2">
               <ActionableAlerts
-                alerts={alerts}
+                alerts={summary.alerts}
                 onStatusChange={handleStatusChange}
               />
-              <DeviceStatus endpoints={mockEndpoints} />
+              <DeviceStatus endpoints={summary.endpoints} />
             </div>
           </TabsContent>
 
           {/* 告警頁面 - 簡化版 */}
           <TabsContent value="alerts">
             <ActionableAlerts
-              alerts={alerts}
+              alerts={summary.alerts}
               onStatusChange={handleStatusChange}
             />
           </TabsContent>
 
           {/* 設備狀態 */}
           <TabsContent value="endpoints">
-            <DeviceStatus endpoints={mockEndpoints} />
+            <DeviceStatus endpoints={summary.endpoints} />
           </TabsContent>
 
           {/* IT 詳細視角 - 保留技術細節 */}
           <TabsContent value="it" className="space-y-6">
             <div className="grid gap-6 lg:grid-cols-2">
-              <AlertTrendChart data={mockAlertTrends} />
-              <EndpointsMonitor endpoints={mockEndpoints} />
+              <AlertTrendChart data={summary.alertTrends} />
+              <EndpointsMonitor endpoints={summary.endpoints} />
             </div>
-            <AlertsTable alerts={alerts} onStatusChange={handleStatusChange} />
+            <AlertsTable alerts={summary.alerts} onStatusChange={handleStatusChange} />
           </TabsContent>
 
           {/* 系統設定 */}
           <TabsContent value="system">
             <SystemStatus
-              health={mockSystemHealth}
-              notifications={notifications}
+              health={summary.systemHealth}
+              notifications={summary.notifications}
               onNotificationChange={handleNotificationChange}
             />
           </TabsContent>
         </Tabs>
+        )}
       </main>
 
       <NotificationPanel
         open={notificationPanelOpen}
         onOpenChange={setNotificationPanelOpen}
-        alerts={alerts}
+        alerts={summary?.alerts || []}
       />
     </div>
   );

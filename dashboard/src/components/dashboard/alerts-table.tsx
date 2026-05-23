@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { format } from "date-fns";
 import { zhTW } from "date-fns/locale";
 import {
@@ -13,7 +13,6 @@ import {
   ChevronDown,
   ChevronUp,
   Server,
-  Search,
   Filter,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +36,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { TechnicalAlertDetails } from "@/components/dashboard/technical-alert-details";
 import type { Alert, SeverityLevel, AlertStatus } from "@/lib/types";
 import { severityLabels, statusLabels } from "@/lib/mock-data";
 import { toast } from "sonner";
@@ -120,11 +120,9 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
             </div>
             <div className="flex gap-2">
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Filter data-icon="inline-start" />
-                    嚴重程度
-                  </Button>
+                <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+                  <Filter data-icon="inline-start" />
+                  嚴重程度
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuGroup>
@@ -147,11 +145,9 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Filter data-icon="inline-start" />
-                    狀態
-                  </Button>
+                <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+                  <Filter data-icon="inline-start" />
+                  狀態
                 </DropdownMenuTrigger>
                 <DropdownMenuContent>
                   <DropdownMenuGroup>
@@ -191,9 +187,8 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
               </TableHeader>
               <TableBody>
                 {filteredAlerts.map((alert) => (
-                  <>
+                  <Fragment key={alert.id}>
                     <TableRow
-                      key={alert.id}
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => setSelectedAlert(alert)}
                     >
@@ -204,9 +199,9 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <div className="font-medium">{alert.rule_description}</div>
+                        <div className="font-medium">{alert.summary || alert.rule_description}</div>
                         <div className="text-sm text-muted-foreground line-clamp-1">
-                          {alert.summary}
+                          {alert.business_impact}
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
@@ -258,6 +253,9 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                               </p>
                             </div>
                           </div>
+                          <div className="mt-4">
+                            <TechnicalAlertDetails alert={alert} compact />
+                          </div>
                           <div className="mt-4 flex flex-wrap gap-2">
                             <Button
                               size="sm"
@@ -287,7 +285,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                         </TableCell>
                       </TableRow>
                     )}
-                  </>
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
@@ -339,6 +337,8 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                   </p>
                 </div>
               </div>
+
+              <TechnicalAlertDetails alert={selectedAlert} />
               
               <Separator />
               

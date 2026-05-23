@@ -10,9 +10,14 @@
 #   ./run.sh bridge    # start the bridge in the background → logs/bridge.log
 #   ./run.sh smoke     # fire a fake brute-force + dump diagnostics
 #   ./run.sh diag      # just dump current pipeline state
-#   ./run.sh up        # check + setup + bridge
+#   ./run.sh dashboard # start the new Next.js dashboard in the background
+#   ./run.sh status    # show bridge/dashboard/Wazuh/LLM/MCP state
+#   ./run.sh start     # start bridge + dashboard
+#   ./run.sh restart   # stop then start bridge + dashboard
+#   ./run.sh up        # check + setup + bridge + dashboard
 #   ./run.sh           # = up && smoke   (the full happy path)
-#   ./run.sh down      # stop bridge + teardown Wazuh + remove agent
+#   ./run.sh stop      # stop bridge + dashboard only
+#   ./run.sh down      # stop bridge + dashboard + teardown Wazuh + remove agent
 
 set -uo pipefail
 
@@ -23,6 +28,7 @@ mkdir -p "$LOGS"
 # ── Project root (one level up from scripts/) ────────────────────────
 ROOT="$DIR/.."
 WAZUH_STACK="$ROOT/wazuh-stack"
+DASHBOARD_DIR="$ROOT/dashboard"
 
 # ── Load unified config (bridge.env) from project root ──────────────
 _BRIDGE_ENV="$ROOT/bridge.env"
@@ -38,6 +44,8 @@ fi
 
 BRIDGE_PORT="${BRIDGE_PORT:-8001}"
 BRIDGE_BIND_HOST="${BRIDGE_BIND_HOST:-0.0.0.0}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
+DASHBOARD_BIND_HOST="${DASHBOARD_BIND_HOST:-127.0.0.1}"
 LM_STUDIO_URL="${LM_STUDIO_URL:-http://localhost:1234/v1/chat/completions}"
 LM_MODEL="${LM_MODEL:-gemma-4-31b-it-mlx}"
 LM_TIMEOUT_S="${LM_TIMEOUT_S:-180}"
@@ -57,6 +65,138 @@ c_log() { printf "\033[1;36m[%s]\033[0m %s\n" "$(date '+%H:%M:%S')" "$*"; }
 c_ok()  { printf "\033[1;32m[✓]\033[0m %s\n" "$*"; }
 c_err() { printf "\033[1;31m[x]\033[0m %s\n" "$*"; }
 c_warn() { printf "\033[1;33m[!]\033[0m %s\n" "$*"; }
+
+pid_alive() {
+  local pid="$1"
+  [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1
+}
+
+read_pid_file() {
+  local file="$1"
+  [[ -f "$file" ]] && tr -d '[:space:]' < "$file"
+}
+
+listen_pids() {
+  local port="$1"
+  lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+}
+
+describe_port() {
+  local port="$1"
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+}
+
+stop_pid_file() {
+  local name="$1"
+  local pid_file="$2"
+  local port="${3:-}"
+  local pid
+  pid="$(read_pid_file "$pid_file")"
+
+  if pid_alive "$pid"; then
+    c_log "stopping $name pid=$pid"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    if pid_alive "$pid"; then
+      c_warn "$name pid=$pid did not stop gracefully; sending TERM again"
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+    fi
+  elif [[ -n "$pid" ]]; then
+    c_warn "$name pid file was stale (pid=$pid)"
+  fi
+  rm -f "$pid_file"
+
+  if [[ -n "$port" ]]; then
+    local port_pids
+    port_pids="$(listen_pids "$port")"
+    if [[ -n "$port_pids" ]]; then
+      c_warn "$name port $port is still occupied; stopping listener(s): $(echo "$port_pids" | tr '\n' ' ')"
+      echo "$port_pids" | while read -r p; do
+        [[ -n "$p" ]] && kill "$p" 2>/dev/null || true
+      done
+      sleep 1
+    fi
+  fi
+}
+
+stop_screen_session() {
+  local session="$1"
+  if command -v screen >/dev/null 2>&1 && screen -ls 2>/dev/null | grep -q "[.]$session[[:space:]]"; then
+    screen -S "$session" -X quit 2>/dev/null || true
+    sleep 1
+  fi
+}
+
+start_detached_service() {
+  local session="$1"
+  local service_cmd="$2"
+  if command -v screen >/dev/null 2>&1; then
+    stop_screen_session "$session"
+    screen -dmS "$session" "$0" "$service_cmd"
+  else
+    nohup "$0" "$service_cmd" >/dev/null 2>&1 &
+  fi
+}
+
+cmd_serve_bridge() {
+  ensure_bridge_https || exit $?
+  cd "$BRIDGE_DIR"
+  LM_STUDIO_URL="$LM_STUDIO_URL" \
+  LM_MODEL="$LM_MODEL" \
+  LM_TIMEOUT_S="$LM_TIMEOUT_S" \
+  BRIDGE_BIND_HOST="$BRIDGE_BIND_HOST" \
+  exec python3 -m uvicorn app:app --host "$BRIDGE_BIND_HOST" --port "$BRIDGE_PORT" "${BRIDGE_SSL_ARGS[@]}" \
+    > "$LOGS/bridge.log" 2>&1
+}
+
+cmd_serve_dashboard() {
+  cd "$DASHBOARD_DIR"
+  local node_extra_ca=""
+  local node_options="${NODE_OPTIONS:-}"
+  local node_tls_reject="${NODE_TLS_REJECT_UNAUTHORIZED:-}"
+  if [[ "$BRIDGE_SCHEME" == "https" && -f "$DIR/certs/ca.crt" ]]; then
+    node_extra_ca="$DIR/certs/ca.crt"
+    node_options="$node_options --use-system-ca"
+    # Next.js dev rewrites run inside Node. Local self-signed certs are valid
+    # for browser testing but may still fail Node's proxy verification.
+    node_tls_reject="${node_tls_reject:-0}"
+  fi
+  DASHBOARD_PORT="$DASHBOARD_PORT" \
+  BRIDGE_API_BASE="$BRIDGE_SCHEME://127.0.0.1:$BRIDGE_PORT" \
+  NEXT_PUBLIC_BRIDGE_API_BASE="" \
+  NODE_EXTRA_CA_CERTS="$node_extra_ca" \
+  NODE_OPTIONS="$node_options" \
+  NODE_TLS_REJECT_UNAUTHORIZED="$node_tls_reject" \
+  exec npm run dev -- --hostname "$DASHBOARD_BIND_HOST" --port "$DASHBOARD_PORT" \
+    > "$LOGS/dashboard.log" 2>&1
+}
+
+service_status_line() {
+  local name="$1"
+  local url="$2"
+  local port="$3"
+  local pid_file="$4"
+  local pid
+  pid="$(read_pid_file "$pid_file")"
+
+  if curl -ksS -m 3 "$url" >/dev/null 2>&1; then
+    if pid_alive "$pid"; then
+      c_ok "$name responding at $url (pid $pid)"
+    else
+      local port_pids
+      port_pids="$(listen_pids "$port" | tr '\n' ' ')"
+      c_warn "$name responding at $url, but pid file is stale; listener pid(s): ${port_pids:-unknown}"
+    fi
+  else
+    if [[ -n "$(listen_pids "$port")" ]]; then
+      c_warn "$name port $port is occupied but $url is not healthy"
+      describe_port "$port"
+    else
+      c_err "$name not running at $url"
+    fi
+  fi
+}
 
 bridge_exposes_network() {
   [[ "$BRIDGE_BIND_HOST" == "0.0.0.0" || "$BRIDGE_BIND_HOST" == "::" || "$BRIDGE_BIND_HOST" == "[::]" ]]
@@ -148,28 +288,29 @@ cmd_setup() {
 
 # ─── bridge (background) ─────────────────────────────────────────────────
 cmd_bridge() {
-  if [[ -f "$LOGS/bridge.pid" ]] && kill -0 "$(cat "$LOGS/bridge.pid")" 2>/dev/null; then
-    c_log "bridge already running (pid $(cat "$LOGS/bridge.pid"))"
-    return 0
-  fi
   ensure_bridge_https || return $?
   ensure_bridge_security || return $?
-  if curl -ksS -m 3 "$BRIDGE_SCHEME://localhost:$BRIDGE_PORT/health" 2>/dev/null | grep -q '"status":"ok"'; then
-    c_ok "bridge already responding on $BRIDGE_SCHEME://localhost:$BRIDGE_PORT"
+  if curl -ksS -m 3 "$BRIDGE_SCHEME://127.0.0.1:$BRIDGE_PORT/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    local pid
+    pid="$(listen_pids "$BRIDGE_PORT" | head -1)"
+    [[ -n "$pid" ]] && echo "$pid" > "$LOGS/bridge.pid"
+    c_ok "bridge already responding on $BRIDGE_SCHEME://127.0.0.1:$BRIDGE_PORT${pid:+ (pid $pid)}"
     return 0
   fi
+  if [[ -n "$(listen_pids "$BRIDGE_PORT")" ]]; then
+    c_err "bridge port $BRIDGE_PORT is occupied, but /health is not responding"
+    describe_port "$BRIDGE_PORT"
+    c_err "Run: $0 stop"
+    return 1
+  fi
   c_log "starting bridge in background → logs/bridge.log (model=$LM_MODEL)"
-  cd "$BRIDGE_DIR"
-  LM_STUDIO_URL="$LM_STUDIO_URL" \
-  LM_MODEL="$LM_MODEL" \
-  LM_TIMEOUT_S="$LM_TIMEOUT_S" \
-  BRIDGE_BIND_HOST="$BRIDGE_BIND_HOST" \
-  nohup python3 -m uvicorn app:app --host "$BRIDGE_BIND_HOST" --port "$BRIDGE_PORT" "${BRIDGE_SSL_ARGS[@]}" \
-    > "$LOGS/bridge.log" 2>&1 &
-  echo $! > "$LOGS/bridge.pid"
+  start_detached_service "edgesec-bridge" "_serve_bridge"
   sleep 3
-  if curl -ksS -m 3 "$BRIDGE_SCHEME://localhost:$BRIDGE_PORT/health" 2>/dev/null | grep -q '"status":"ok"'; then
-    c_ok "bridge up (pid $(cat "$LOGS/bridge.pid"))"
+  if curl -ksS -m 3 "$BRIDGE_SCHEME://127.0.0.1:$BRIDGE_PORT/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    local pid
+    pid="$(listen_pids "$BRIDGE_PORT" | head -1)"
+    [[ -n "$pid" ]] && echo "$pid" > "$LOGS/bridge.pid"
+    c_ok "bridge up${pid:+ (pid $pid)}"
   else
     c_err "bridge didn't pass /health — see logs/bridge.log"
     return 1
@@ -177,10 +318,82 @@ cmd_bridge() {
 }
 
 cmd_stop_bridge() {
-  if [[ -f "$LOGS/bridge.pid" ]]; then
-    local pid; pid="$(cat "$LOGS/bridge.pid")"
-    if kill "$pid" 2>/dev/null; then c_ok "stopped bridge (pid $pid)"; fi
-    rm -f "$LOGS/bridge.pid"
+  stop_screen_session "edgesec-bridge"
+  stop_pid_file "bridge" "$LOGS/bridge.pid" "$BRIDGE_PORT"
+}
+
+cmd_dashboard() {
+  if [[ ! -f "$DASHBOARD_DIR/package.json" ]]; then
+    c_err "dashboard source not found at $DASHBOARD_DIR"
+    return 1
+  fi
+  if curl -sS -m 3 "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null 2>&1; then
+    local pid
+    pid="$(listen_pids "$DASHBOARD_PORT" | head -1)"
+    [[ -n "$pid" ]] && echo "$pid" > "$LOGS/dashboard.pid"
+    c_ok "dashboard already responding on http://127.0.0.1:$DASHBOARD_PORT${pid:+ (pid $pid)}"
+    return 0
+  fi
+  if [[ -n "$(listen_pids "$DASHBOARD_PORT")" ]]; then
+    c_err "dashboard port $DASHBOARD_PORT is occupied, but the dashboard is not responding"
+    describe_port "$DASHBOARD_PORT"
+    c_err "Run: $0 stop"
+    return 1
+  fi
+  c_log "starting dashboard in background → logs/dashboard.log"
+  start_detached_service "edgesec-dashboard" "_serve_dashboard"
+  sleep 3
+  if curl -sS -m 3 "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null 2>&1; then
+    local pid
+    pid="$(listen_pids "$DASHBOARD_PORT" | head -1)"
+    [[ -n "$pid" ]] && echo "$pid" > "$LOGS/dashboard.pid"
+    c_ok "dashboard up${pid:+ (pid $pid)}"
+  else
+    c_err "dashboard didn't pass startup check — see logs/dashboard.log"
+    return 1
+  fi
+}
+
+cmd_stop_dashboard() {
+  stop_screen_session "edgesec-dashboard"
+  stop_pid_file "dashboard" "$LOGS/dashboard.pid" "$DASHBOARD_PORT"
+}
+
+cmd_start() {
+  cmd_bridge && cmd_dashboard
+}
+
+cmd_stop() {
+  cmd_stop_dashboard
+  cmd_stop_bridge
+}
+
+cmd_restart() {
+  cmd_stop
+  cmd_start
+}
+
+cmd_status() {
+  c_log "EdgeSec-Pi service status"
+  service_status_line "bridge" "$BRIDGE_SCHEME://127.0.0.1:$BRIDGE_PORT/health" "$BRIDGE_PORT" "$LOGS/bridge.pid"
+  service_status_line "dashboard" "http://127.0.0.1:$DASHBOARD_PORT" "$DASHBOARD_PORT" "$LOGS/dashboard.pid"
+
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^single-node-wazuh.manager-1$'; then
+    c_ok "Wazuh manager container is running"
+  else
+    c_warn "Wazuh manager container not found"
+  fi
+
+  if curl -sS -m 3 "$LM_STUDIO_MODELS_URL" >/dev/null 2>&1; then
+    c_ok "LM Studio responding at $LM_STUDIO_MODELS_URL"
+  else
+    c_warn "LM Studio not responding at $LM_STUDIO_MODELS_URL"
+  fi
+
+  if curl -sS -m 3 "$MCP_SERVER_URL/health" >/dev/null 2>&1 || curl -sS -m 3 "$MCP_SERVER_URL" >/dev/null 2>&1; then
+    c_ok "MCP endpoint responding at $MCP_SERVER_URL"
+  else
+    c_warn "MCP endpoint not responding at $MCP_SERVER_URL"
   fi
 }
 
@@ -236,7 +449,7 @@ cmd_diag() {
 }
 
 cmd_down() {
-  cmd_stop_bridge
+  cmd_stop
   c_log "tearing down Wazuh stack → logs/teardown.log"
   "$WAZUH_STACK/teardown.sh" > "$LOGS/teardown.log" 2>&1
   c_ok "down"
@@ -244,25 +457,37 @@ cmd_down() {
 
 # ─── dispatch ────────────────────────────────────────────────────────────
 case "${1:-default}" in
+  _serve_bridge) cmd_serve_bridge ;;
+  _serve_dashboard) cmd_serve_dashboard ;;
   check)  cmd_check ;;
   setup)  cmd_setup ;;
   bridge) cmd_bridge ;;
+  dashboard) cmd_dashboard ;;
   smoke)  cmd_smoke ;;
   diag)   cmd_diag ;;
+  status) cmd_status ;;
+  start)  cmd_start ;;
+  stop)   cmd_stop ;;
+  restart) cmd_restart ;;
   down)   cmd_down ;;
-  up)     cmd_check && cmd_setup && cmd_bridge ;;
+  up)     cmd_check && cmd_setup && cmd_start ;;
   default|all)
-          cmd_check && cmd_setup && cmd_bridge && cmd_smoke ;;
+          cmd_check && cmd_setup && cmd_start && cmd_smoke ;;
   *)      cat <<EOF
-usage: $0 {check|setup|bridge|smoke|diag|up|down|all}
+usage: $0 {check|setup|bridge|dashboard|start|stop|restart|status|smoke|diag|up|down|all}
   check   prereq audit (Docker, LM Studio, port, bridge source)
   setup   bring up Wazuh stack only
   bridge  start bridge in background → logs/bridge.log
+  dashboard start Next.js dashboard in background → logs/dashboard.log
+  start   start bridge + dashboard
+  stop    stop bridge + dashboard
+  restart stop then start bridge + dashboard
+  status  show service status and stale PID/port issues
   smoke   fire fake brute-force + dump diag
   diag    just dump current state → logs/diag.log
-  up      check + setup + bridge   (do this once)
+  up      check + setup + bridge + dashboard   (do this once)
   smoke   trigger after up         (rerunnable)
-  down    stop bridge + tear down stack
+  down    stop bridge + dashboard + tear down stack
   (no arg) = up && smoke (full happy path)
 
 All command outputs land in ./logs/ for troubleshooting.

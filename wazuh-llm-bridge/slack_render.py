@@ -76,6 +76,11 @@ def _slack_plain(text: str, limit: int = 130) -> str:
     return text[:limit] if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _is_sample_alert(alert: dict[str, Any]) -> bool:
+    meta = alert.get("_edgesec") if isinstance(alert.get("_edgesec"), dict) else {}
+    return alert.get("@sampledata") is True or bool(meta.get("sampledata"))
+
+
 def _format_evidence_lines(evidence: list[dict[str, Any]] | None) -> str:
     """Render the agent's tool-call trace as a tidy bullet list for Slack."""
     if not evidence:
@@ -117,6 +122,7 @@ def build_slack_payload(alert: dict[str, Any],
     level        = rule.get("level", "?")
     description  = rule.get("description", "")
     ctx          = _asset_context(alert)
+    is_sample    = _is_sample_alert(alert)
 
     agent        = alert.get("agent") or {}
     agent_label  = agent.get("name", "?")
@@ -142,7 +148,10 @@ def build_slack_payload(alert: dict[str, Any],
     # When the agentic loop ran, the 白話 investigation summary slots in
     # right after 立刻該做的事 so the reader can audit the AI's reasoning
     # without staring at Lucene syntax.
-    body_lines = [f"*哪台電腦 / 業務背景*\n{_context_markdown(ctx)}", "", f"*發生什麼事*\n{summary_zh}"]
+    body_lines = []
+    if is_sample:
+        body_lines += ["🧪 *測試資料*", "這是 Wazuh Sample Data，用來測試通知流程，不是真實攻擊。", ""]
+    body_lines += [f"*哪台電腦 / 業務背景*\n{_context_markdown(ctx)}", "", f"*發生什麼事*\n{summary_zh}"]
     if impact_zh:
         body_lines += ["", f"📛 *不處理的後果*", impact_zh]
     body_lines += ["", f"🎯 *立刻該做的事*", next_step_zh]
@@ -174,7 +183,7 @@ def build_slack_payload(alert: dict[str, Any],
     return {
         "attachments": [{
             "color":     color,
-            "title":     f"{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
+            "title":     f"{'🧪 ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
             "pretext":   f"技術規則：{description}" if description else "",
             "text":      main_text,
             "fields":    fields,
@@ -204,6 +213,7 @@ def build_slack_blocks_payload(alert: dict[str, Any],
     level        = rule.get("level", "?")
     description  = rule.get("description", "")
     ctx          = _asset_context(alert)
+    is_sample    = _is_sample_alert(alert)
 
     agent        = alert.get("agent") or {}
     agent_label  = agent.get("name", "?")
@@ -229,7 +239,14 @@ def build_slack_blocks_payload(alert: dict[str, Any],
     blocks: list[dict[str, Any]] = [
         {"type": "header",
          "text": {"type": "plain_text",
-                  "text": _slack_plain(f"{emoji} 【{sev_zh}】{ctx['name']} 需要確認")}},
+                  "text": _slack_plain(f"{'測試資料 · ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認")}},
+    ]
+    if is_sample:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "🧪 *測試資料*\n這是 Wazuh Sample Data，用來測試通知流程，不是真實攻擊。"},
+        })
+    blocks += [
         {"type": "section",
          "text": {"type": "mrkdwn",
                   "text": f"*哪台電腦 / 業務背景*\n{_context_markdown(ctx)}"}},
@@ -489,6 +506,7 @@ def build_quick_slack_payload(alert: dict[str, Any],
     rule = alert.get("rule") or {}
     description = rule.get("description", "")
     ctx = _asset_context(alert)
+    is_sample = _is_sample_alert(alert)
 
     summary_zh = (parsed.get("summary_zh")
                   or parsed.get("root_cause")
@@ -498,7 +516,10 @@ def build_quick_slack_payload(alert: dict[str, Any],
                     or parsed.get("action")
                     or "（請聯絡 IT 評估）")
 
-    body_lines = [f"*哪台電腦 / 業務背景*\n{_context_markdown(ctx)}", "", f"*發生什麼事*\n{summary_zh}"]
+    body_lines = []
+    if is_sample:
+        body_lines += ["🧪 *測試資料*", "這是 Wazuh Sample Data，用來測試通知流程，不是真實攻擊。", ""]
+    body_lines += [f"*哪台電腦 / 業務背景*\n{_context_markdown(ctx)}", "", f"*發生什麼事*\n{summary_zh}"]
     if impact_zh:
         body_lines += ["", f"📛 *不處理的後果*\n{impact_zh}"]
     body_lines += ["", f"🎯 *立刻該做的事*\n{next_step_zh}"]
@@ -506,7 +527,7 @@ def build_quick_slack_payload(alert: dict[str, Any],
     return {
         "attachments": [{
             "color":     color,
-            "title":     f"{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
+            "title":     f"{'🧪 ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
             "pretext":   f"技術規則：{description}" if description else "",
             "text":      "\n".join(body_lines),
             "footer":    f"EdgeSec-Pi · Wazuh + {LM_MODEL} 快速分流",
@@ -533,6 +554,7 @@ def build_quick_slack_blocks_payload(alert: dict[str, Any],
     rule = alert.get("rule") or {}
     description = rule.get("description", "")
     ctx = _asset_context(alert)
+    is_sample = _is_sample_alert(alert)
 
     summary_zh = (parsed.get("summary_zh")
                   or parsed.get("root_cause")
@@ -545,7 +567,14 @@ def build_quick_slack_blocks_payload(alert: dict[str, Any],
     blocks: list[dict[str, Any]] = [
         {"type": "header",
          "text": {"type": "plain_text",
-                  "text": _slack_plain(f"{emoji} 【{sev_zh}】{ctx['name']} 需要確認")}},
+                  "text": _slack_plain(f"{'測試資料 · ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認")}},
+    ]
+    if is_sample:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "🧪 *測試資料*\n這是 Wazuh Sample Data，用來測試通知流程，不是真實攻擊。"},
+        })
+    blocks += [
         {"type": "section",
          "text": {"type": "mrkdwn",
                   "text": f"*哪台電腦 / 業務背景*\n{_context_markdown(ctx)}"}},

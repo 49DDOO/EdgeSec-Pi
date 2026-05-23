@@ -14,7 +14,7 @@ import os
 import time
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -30,6 +30,7 @@ import org_profile
 router = APIRouter()
 
 SIEM_DASHBOARD_URL = os.getenv("SIEM_DASHBOARD_URL", "").rstrip("/")
+DASHBOARD_V2_URL = os.getenv("DASHBOARD_V2_URL", "").rstrip("/")
 WAZUH_AGENT_VERSION = os.getenv("WAZUH_VERSION", "4.14.5").lstrip("v")
 MANAGER_HOST = os.getenv("MANAGER_HOST", "localhost")
 PROFILE_LINK_TTL_S = int(os.getenv("PROFILE_LINK_TTL_S", "28800"))
@@ -37,6 +38,30 @@ PROFILE_LINK_TTL_S = int(os.getenv("PROFILE_LINK_TTL_S", "28800"))
 
 def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
+
+
+def _dashboard_v2_redirect_url(request: Request) -> str:
+    """Translate legacy bridge dashboard links to the Next.js dashboard.
+
+    The release UI lives in dashboard/.  The bridge keeps /dashboard as a
+    compatibility entry point for old bookmarks and Slack links, but it should
+    no longer render a second management UI.
+    """
+    view = (request.query_params.get("view") or "today").strip().lower()
+    path_by_view = {
+        "today": "/",
+        "services": "/settings/endpoints",
+        "setup": "/settings/status",
+        "platform": "/settings/status",
+        "advanced": "/settings/testing",
+        "notifications": "/settings/notifications",
+        "testing": "/settings/testing",
+        "status": "/settings/status",
+    }
+    target_path = path_by_view.get(view, "/")
+    anchor = request.url.fragment
+    target = urljoin(f"{DASHBOARD_V2_URL}/", target_path.lstrip("/"))
+    return f"{target}#{anchor}" if anchor else target
 
 
 def _fmt_time(epoch: float | int | None) -> str:
@@ -1173,7 +1198,10 @@ async def root() -> RedirectResponse:
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request) -> HTMLResponse:
+async def dashboard(request: Request):
+    if DASHBOARD_V2_URL:
+        return RedirectResponse(url=_dashboard_v2_redirect_url(request))
+
     stats = await db.compute_stats()
 
     # 管理層只看 medium 以上，Wazuh / API 保留全部細節給 IT。

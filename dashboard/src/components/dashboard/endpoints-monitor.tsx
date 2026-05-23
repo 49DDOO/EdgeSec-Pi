@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Endpoint, EndpointStatus } from "@/lib/types";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import { zhTW } from "date-fns/locale";
 
 interface EndpointsMonitorProps {
@@ -48,14 +48,16 @@ const getStatusBadge = (status: EndpointStatus) => {
   }
 };
 
-const getHealthScoreColor = (score: number) => {
+const getScaScoreColor = (score: number | null | undefined) => {
+  if (score == null) return "text-muted-foreground";
   if (score >= 80) return "text-success";
   if (score >= 60) return "text-high";
   if (score >= 40) return "text-medium";
   return "text-destructive";
 };
 
-const getHealthScoreBg = (score: number) => {
+const getScaScoreBg = (score: number | null | undefined) => {
+  if (score == null) return "bg-muted";
   if (score >= 80) return "bg-success";
   if (score >= 60) return "bg-high";
   if (score >= 40) return "bg-medium";
@@ -97,13 +99,15 @@ export function EndpointsMonitor({ endpoints }: EndpointsMonitorProps) {
                 key={endpoint.id}
                 className="flex items-center gap-4 rounded-lg border p-4 transition-colors hover:bg-muted/50"
               >
+                {/*
+                  SCA 是安全設定分數，和 Agent 在線狀態不同。不要用連線
+                  狀態去假裝安全分數，否則會把 Wazuh 60 分顯示成 100 分。
+                */}
                 <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Avatar className="size-10">
-                      <AvatarFallback className="bg-muted text-muted-foreground">
-                        {getStatusIcon(endpoint.status)}
-                      </AvatarFallback>
-                    </Avatar>
+                  <TooltipTrigger render={<Avatar className="size-10" />}>
+                    <AvatarFallback className="bg-muted text-muted-foreground">
+                      {getStatusIcon(endpoint.status)}
+                    </AvatarFallback>
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>{endpoint.status === "online" ? "連線正常" : endpoint.status === "warning" ? "需要注意" : "已離線"}</p>
@@ -116,7 +120,10 @@ export function EndpointsMonitor({ endpoints }: EndpointsMonitorProps) {
                     {getStatusBadge(endpoint.status)}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                    <span>{endpoint.ip}</span>
+                    <span>
+                      {endpoint.ip || "IP 未回報"}
+                      {endpoint.ip_is_loopback ? "（Agent 尚未回報內網位址）" : ""}
+                    </span>
                     <span className="hidden sm:inline">{endpoint.os}</span>
                     <span className="hidden md:inline">{endpoint.purpose}</span>
                   </div>
@@ -131,24 +138,27 @@ export function EndpointsMonitor({ endpoints }: EndpointsMonitorProps) {
 
                 <div className="flex flex-col items-end gap-1">
                   <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-lg font-bold ${getHealthScoreColor(endpoint.health_score)}`}>
-                          {endpoint.health_score}
-                        </span>
-                        <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className={`h-full ${getHealthScoreBg(endpoint.health_score)}`}
-                            style={{ width: `${endpoint.health_score}%` }}
-                          />
-                        </div>
+                    <TooltipTrigger render={<div className="flex items-center gap-2" />}>
+                      <span className={`text-lg font-bold ${getScaScoreColor(endpoint.sca_score)}`}>
+                        {endpoint.sca_score ?? "-"}
+                      </span>
+                      <div className="h-2 w-16 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-full ${getScaScoreBg(endpoint.sca_score)}`}
+                          style={{ width: `${endpoint.sca_score ?? 0}%` }}
+                        />
                       </div>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>健康分數: {endpoint.health_score}/100</p>
+                      <p>
+                        {endpoint.sca_score == null
+                          ? "安全設定分數尚未取得"
+                          : `安全設定分數: ${endpoint.sca_score}/100`}
+                      </p>
+                      {endpoint.sca?.policy ? <p>{endpoint.sca.policy}</p> : null}
                     </TooltipContent>
                   </Tooltip>
-                  <span className="text-xs text-muted-foreground">v{endpoint.version}</span>
+                  <span className="text-xs text-muted-foreground">安全設定 / v{endpoint.version}</span>
                 </div>
               </div>
             ))}

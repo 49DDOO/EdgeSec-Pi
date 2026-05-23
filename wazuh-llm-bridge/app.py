@@ -43,8 +43,9 @@ try:
 except ImportError:
     pass  # dotenv not installed → caller must export env vars manually
 
-import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
 import db        # local module: SQLite persistence for alerts + LLM verdicts
 import digest    # local module: daily freshness check (Wazuh ver / CVE feed / agents)
@@ -392,6 +393,18 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SIEM → LM Studio bridge", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "https://127.0.0.1:3000",
+        "https://localhost:3000",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "PATCH", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 app.include_router(dashboard_ui.router)     # /dashboard management-facing summary
 app.include_router(admin_ui.router)         # /admin and /admin/quick-add routes
 app.include_router(active_response_api.router)

@@ -6,16 +6,13 @@ import {
   Bell,
   Brain,
   Link2,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import type { SystemHealth, NotificationConfig } from "@/lib/types";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import { zhTW } from "date-fns/locale";
 
 interface SystemStatusProps {
@@ -23,17 +20,6 @@ interface SystemStatusProps {
   notifications: NotificationConfig;
   onNotificationChange?: (key: keyof NotificationConfig, value: boolean) => void;
 }
-
-const getHealthStatusIcon = (status: "healthy" | "degraded" | "down") => {
-  switch (status) {
-    case "healthy":
-      return <CheckCircle2 className="size-4 text-success" />;
-    case "degraded":
-      return <AlertTriangle className="size-4 text-high" />;
-    case "down":
-      return <XCircle className="size-4 text-destructive" />;
-  }
-};
 
 const getHealthStatusBadge = (status: "healthy" | "degraded" | "down") => {
   switch (status) {

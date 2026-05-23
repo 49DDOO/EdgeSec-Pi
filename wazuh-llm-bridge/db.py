@@ -153,11 +153,17 @@ _LIST_COLUMNS = (
     "raw_alert"
 )
 
+_NOT_SAMPLEDATA_SQL = (
+    "COALESCE(json_extract(raw_alert, '$.\"@sampledata\"'), 0) != 1 "
+    "AND COALESCE(json_extract(raw_alert, '$._edgesec.sampledata'), 0) != 1"
+)
+
 
 def _list_alerts_sync(limit: int, severity: str | None,
                       rule_id: str | None,
                       agent_name: str | None = None,
-                      active_only: bool = False) -> list[dict[str, Any]]:
+                      active_only: bool = False,
+                      include_sampledata: bool = False) -> list[dict[str, Any]]:
     where, args = [], []
     if severity:
         where.append("llm_severity = ?")
@@ -170,6 +176,8 @@ def _list_alerts_sync(limit: int, severity: str | None,
         args.append(agent_name)
     if active_only:
         where.append("case_status IN ('open', 'in_progress')")
+    if not include_sampledata:
+        where.append(_NOT_SAMPLEDATA_SQL)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     args.append(int(limit))
     with _connect() as conn:
@@ -300,60 +308,70 @@ def _fetch_correlation_context_sync(srcip: str | None,
 
 def _compute_stats_sync() -> dict[str, Any]:
     with _connect() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM alerts WHERE {_NOT_SAMPLEDATA_SQL}"
+        ).fetchone()[0]
 
         last_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400"
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400"
         ).fetchone()[0]
 
         cur = conn.execute(
             "SELECT COALESCE(llm_severity, 'unclassified') AS s, COUNT(*) AS c "
-            "FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "GROUP BY s"
         )
         by_severity_24h = {row["s"]: row["c"] for row in cur.fetchall()}
 
         cur = conn.execute(
             "SELECT COALESCE(llm_severity, 'unclassified') AS s, COUNT(*) AS c "
-            "FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND case_status IN ('open', 'in_progress') "
             "GROUP BY s"
         )
         open_by_severity_24h = {row["s"]: row["c"] for row in cur.fetchall()}
 
         open_cases_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND case_status IN ('open', 'in_progress')"
         ).fetchone()[0]
 
         closed_cases_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND case_status NOT IN ('open', 'in_progress')"
         ).fetchone()[0]
 
         cur = conn.execute(
             "SELECT AVG(llm_latency_ms) FROM "
             "(SELECT llm_latency_ms FROM alerts "
-            " WHERE llm_status='ok' "
+            f" WHERE llm_status='ok' AND {_NOT_SAMPLEDATA_SQL} "
             " ORDER BY received_at DESC LIMIT 100)"
         )
         avg_lat = cur.fetchone()[0]
 
         cur = conn.execute(
             "SELECT rule_id, rule_description, COUNT(*) AS c FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "GROUP BY rule_id ORDER BY c DESC LIMIT 5"
         )
         top_rules = [dict(row) for row in cur.fetchall()]
 
         errors_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND llm_status = 'error'"
         ).fetchone()[0]
 
@@ -389,9 +407,10 @@ async def list_alerts(limit: int = 50,
                       severity: str | None = None,
                       rule_id: str | None = None,
                       agent_name: str | None = None,
-                      active_only: bool = False) -> list[dict[str, Any]]:
+                      active_only: bool = False,
+                      include_sampledata: bool = False) -> list[dict[str, Any]]:
     return await asyncio.to_thread(
-        _list_alerts_sync, limit, severity, rule_id, agent_name, active_only
+        _list_alerts_sync, limit, severity, rule_id, agent_name, active_only, include_sampledata
     )
 
 
