@@ -379,7 +379,7 @@ export default function EndpointsPage() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
-  const [managerHost, setManagerHost] = useState(() => managerHostFromBrowser());
+  const [managerHost, setManagerHost] = useState("192.168.x.x");
   const [selectedOs, setSelectedOs] = useState<OsKind>("macos");
   const [editing, setEditing] = useState<Endpoint | null>(null);
   const [securityDetails, setSecurityDetails] = useState<Endpoint | null>(null);
@@ -415,9 +415,7 @@ export default function EndpointsPage() {
     fetchDashboardSummary()
       .then((summary) => {
         setEndpoints(summary.endpoints);
-        if (summary.install?.manager_host) {
-          setManagerHost(summary.install.manager_host);
-        }
+        setManagerHost(summary.install?.manager_host || managerHostFromBrowser());
       })
       .catch((error) => {
         toast.error("讀取端點失敗", {
