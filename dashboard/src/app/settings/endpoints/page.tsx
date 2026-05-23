@@ -175,7 +175,7 @@ function SecurityScoreDialog({
 
   return (
     <Dialog open={Boolean(endpoint)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-5xl overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>安全設定分數</DialogTitle>
           <DialogDescription>
@@ -185,143 +185,149 @@ function SecurityScoreDialog({
 
         {endpoint && (
           <div className="space-y-5">
-            <div className="rounded-lg border bg-muted/40 p-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div className="text-sm text-muted-foreground">{endpoint.name}</div>
-                  <div className="mt-1 text-4xl font-semibold">{scoreText}</div>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+              <div className="rounded-lg border bg-muted/40 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="text-sm text-muted-foreground">{endpoint.name}</div>
+                    <div className="mt-1 text-5xl font-semibold tracking-tight">{scoreText}</div>
+                  </div>
+                  <Badge variant={needsAttention ? "destructive" : "outline"}>
+                    {needsAttention ? "需要 IT 補強" : "目前可接受"}
+                  </Badge>
                 </div>
-                <Badge variant={needsAttention ? "destructive" : "outline"}>
-                  {needsAttention ? "需要 IT 補強" : "目前可接受"}
-                </Badge>
+                <p className="mt-4 max-w-2xl text-sm text-muted-foreground">{reason}</p>
               </div>
-              <p className="mt-3 text-sm text-muted-foreground">{reason}</p>
-            </div>
 
-            <div className="grid gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-muted-foreground">通過</div>
-                <div className="text-2xl font-semibold text-emerald-600">{passed}</div>
-              </div>
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-muted-foreground">未通過</div>
-                <div className="text-2xl font-semibold text-red-600">{failed}</div>
-              </div>
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-muted-foreground">無法判斷</div>
-                <div className="text-2xl font-semibold text-muted-foreground">{invalid}</div>
-              </div>
-              <div className="rounded-lg border p-3">
-                <div className="text-xs text-muted-foreground">總檢查項</div>
-                <div className="text-2xl font-semibold">{total || "-"}</div>
-              </div>
-            </div>
-
-            <div className="rounded-lg border p-4">
-              <div className="text-base font-semibold">先處理這幾項</div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                來源是 Wazuh 的未通過檢查；有補強步驟時會直接附在項目下方。
-              </p>
-              <div className="mt-4 space-y-2">
-                {plainFailedChecks.length ? plainFailedChecks.slice(0, 3).map((check) => (
-                  <div key={check.source_title || check.title_zh} className="rounded-lg border bg-background p-3">
-                    <div className="flex gap-3">
-                      <div className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
-                      <div className="space-y-1">
-                        <div className="font-medium">{check.title_zh}</div>
-                        <div className="text-sm text-muted-foreground">{check.action_zh}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {check.source === "llm_from_wazuh_sca" ? "本機 LLM 摘要" : "Wazuh 原始項目"}
-                        </div>
-                        {check.source_remediation ? (
-                          <details className="text-xs text-muted-foreground">
-                            <summary className="cursor-pointer font-medium text-foreground">Wazuh 補強步驟</summary>
-                            <div className="mt-2 whitespace-pre-wrap rounded-md bg-muted p-2 leading-relaxed">
-                              {check.source_remediation}
-                            </div>
-                          </details>
-                        ) : null}
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer">原始 Wazuh 檢查名稱</summary>
-                          <div className="mt-1 break-words">{check.source_title}</div>
-                        </details>
-                      </div>
-                    </div>
-                  </div>
-                )) : failedChecks.length ? failedChecks.slice(0, 3).map((check) => (
-                  <div key={check.id || check.title} className="rounded-lg border bg-background p-3">
-                    <div className="flex gap-3">
-                      <div className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
-                      <div className="space-y-1">
-                        <div className="font-medium">{check.title || "Wazuh 安全設定檢查未通過"}</div>
-                        <div className="text-sm text-muted-foreground">
-                          {check.remediation
-                            ? "請 IT 依下方 Wazuh 補強步驟處理；若是公司允許的例外，請留下紀錄。"
-                            : "請 IT 查看 Wazuh 原始檢查項目；若是公司允許的例外，請留下紀錄。"}
-                        </div>
-                        <div className="text-xs text-muted-foreground">Wazuh 原始項目</div>
-                        {check.remediation ? (
-                          <details className="text-xs text-muted-foreground">
-                            <summary className="cursor-pointer font-medium text-foreground">Wazuh 補強步驟</summary>
-                            <div className="mt-2 whitespace-pre-wrap rounded-md bg-muted p-2 leading-relaxed">
-                              {check.remediation}
-                            </div>
-                          </details>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                )) : (
-                  <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">
-                    目前只取得分數，尚未取得未通過清單。請 IT 到 Wazuh Dashboard 查看這台電腦的安全設定檢查。
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-3 rounded-lg border p-4 text-sm">
-              <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-                <div className="text-muted-foreground">檢查基準</div>
-                <div className="font-medium">{endpoint.sca?.policy || "尚未取得"}</div>
-              </div>
-              <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-                <div className="text-muted-foreground">上次掃描</div>
-                <div>{endpoint.sca?.last_scan ? formatDateTime(endpoint.sca.last_scan) : "尚未取得"}</div>
-              </div>
-              <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-                <div className="text-muted-foreground">建議動作</div>
-                <div>
-                  請把「先處理這幾項」交給 IT；處理後重新掃描，確認分數有上升。
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border p-4">
+                  <div className="text-xs text-muted-foreground">通過</div>
+                  <div className="text-3xl font-semibold text-emerald-600">{passed}</div>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <div className="text-xs text-muted-foreground">未通過</div>
+                  <div className="text-3xl font-semibold text-red-600">{failed}</div>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <div className="text-xs text-muted-foreground">無法判斷</div>
+                  <div className="text-3xl font-semibold text-muted-foreground">{invalid}</div>
+                </div>
+                <div className="rounded-lg border p-4">
+                  <div className="text-xs text-muted-foreground">總檢查項</div>
+                  <div className="text-3xl font-semibold">{total || "-"}</div>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-lg border p-4">
-              <div className="text-base font-semibold">處理後怎麼確認</div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                按下後會要求 Wazuh 重新啟動這台 Agent，讓安全設定檢查重新跑一次；通常不會重開電腦，也不會重讀全部舊日誌。
-              </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-lg border p-3">
-                  <div className="text-xs text-muted-foreground">重新檢查前</div>
-                  <div className="text-2xl font-semibold">
-                    {typeof previousScore === "number" ? previousScore : "尚未送出"}
-                  </div>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <div className="text-xs text-muted-foreground">目前分數</div>
-                  <div className="text-2xl font-semibold">{score == null ? "-" : score}</div>
-                </div>
-                <div className="rounded-lg border p-3">
-                  <div className="text-xs text-muted-foreground">結果</div>
-                  <div className="text-sm font-medium">{comparisonText}</div>
-                </div>
-              </div>
-              {recheckResult ? (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  已送出：{formatDateTime(recheckResult.requestedAt)}。請等 1 到 5 分鐘後重新整理最新分數。
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
+              <div className="rounded-lg border p-4">
+                <div className="text-base font-semibold">先處理這幾項</div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  來源是 Wazuh 的未通過檢查；有補強步驟時會直接附在項目下方。
                 </p>
-              ) : null}
+                <div className="mt-4 space-y-2">
+                  {plainFailedChecks.length ? plainFailedChecks.slice(0, 3).map((check) => (
+                    <div key={check.source_title || check.title_zh} className="rounded-lg border bg-background p-4">
+                      <div className="flex gap-3">
+                        <div className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
+                        <div className="space-y-1">
+                          <div className="font-medium">{check.title_zh}</div>
+                          <div className="text-sm text-muted-foreground">{check.action_zh}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {check.source === "llm_from_wazuh_sca" ? "本機 LLM 摘要" : "Wazuh 原始項目"}
+                          </div>
+                          {check.source_remediation ? (
+                            <details className="text-xs text-muted-foreground">
+                              <summary className="cursor-pointer font-medium text-foreground">Wazuh 補強步驟</summary>
+                              <div className="mt-2 whitespace-pre-wrap rounded-md bg-muted p-2 leading-relaxed">
+                                {check.source_remediation}
+                              </div>
+                            </details>
+                          ) : null}
+                          <details className="text-xs text-muted-foreground">
+                            <summary className="cursor-pointer">原始 Wazuh 檢查名稱</summary>
+                            <div className="mt-1 break-words">{check.source_title}</div>
+                          </details>
+                        </div>
+                      </div>
+                    </div>
+                  )) : failedChecks.length ? failedChecks.slice(0, 3).map((check) => (
+                    <div key={check.id || check.title} className="rounded-lg border bg-background p-4">
+                      <div className="flex gap-3">
+                        <div className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
+                        <div className="space-y-1">
+                          <div className="font-medium">{check.title || "Wazuh 安全設定檢查未通過"}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {check.remediation
+                              ? "請 IT 依下方 Wazuh 補強步驟處理；若是公司允許的例外，請留下紀錄。"
+                              : "請 IT 查看 Wazuh 原始檢查項目；若是公司允許的例外，請留下紀錄。"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Wazuh 原始項目</div>
+                          {check.remediation ? (
+                            <details className="text-xs text-muted-foreground">
+                              <summary className="cursor-pointer font-medium text-foreground">Wazuh 補強步驟</summary>
+                              <div className="mt-2 whitespace-pre-wrap rounded-md bg-muted p-2 leading-relaxed">
+                                {check.remediation}
+                              </div>
+                            </details>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">
+                      目前只取得分數，尚未取得未通過清單。請 IT 到 Wazuh Dashboard 查看這台電腦的安全設定檢查。
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-3 rounded-lg border p-4 text-sm">
+                  <div className="grid gap-1 sm:grid-cols-[96px_1fr]">
+                    <div className="text-muted-foreground">檢查基準</div>
+                    <div className="font-medium">{endpoint.sca?.policy || "尚未取得"}</div>
+                  </div>
+                  <div className="grid gap-1 sm:grid-cols-[96px_1fr]">
+                    <div className="text-muted-foreground">上次掃描</div>
+                    <div>{endpoint.sca?.last_scan ? formatDateTime(endpoint.sca.last_scan) : "尚未取得"}</div>
+                  </div>
+                  <div className="grid gap-1 sm:grid-cols-[96px_1fr]">
+                    <div className="text-muted-foreground">建議動作</div>
+                    <div>
+                      請把「先處理這幾項」交給 IT；處理後重新掃描，確認分數有上升。
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border p-4">
+                  <div className="text-base font-semibold">處理後怎麼確認</div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    按下後會要求 Wazuh 重新啟動這台 Agent，讓安全設定檢查重新跑一次；通常不會重開電腦，也不會重讀全部舊日誌。
+                  </p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+                    <div className="rounded-lg border p-3">
+                      <div className="text-xs text-muted-foreground">重新檢查前</div>
+                      <div className="text-2xl font-semibold">
+                        {typeof previousScore === "number" ? previousScore : "尚未送出"}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <div className="text-xs text-muted-foreground">目前分數</div>
+                      <div className="text-2xl font-semibold">{score == null ? "-" : score}</div>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <div className="text-xs text-muted-foreground">結果</div>
+                      <div className="text-sm font-medium">{comparisonText}</div>
+                    </div>
+                  </div>
+                  {recheckResult ? (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      已送出：{formatDateTime(recheckResult.requestedAt)}。請等 1 到 5 分鐘後重新整理最新分數。
+                    </p>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
         )}
