@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   AlertTriangle,
   ShieldAlert,
@@ -7,13 +8,25 @@ import {
   XCircle,
   Wrench,
   ChevronDown,
+  Search,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { TechnicalAlertDetails } from "@/components/dashboard/technical-alert-details";
-import type { Alert, AlertStatus } from "@/lib/types";
+import { isBossActionAlert, itFollowupAlerts } from "@/lib/alert-routing";
+import { sendInvestigationMessage } from "@/lib/api";
+import type { Alert, AlertStatus, InvestigationEvidence, InvestigationMessage } from "@/lib/types";
 import { toast } from "sonner";
 
 interface ActionableAlertsProps {
@@ -136,8 +149,59 @@ const formatGroupTimeRange = (alerts: Alert[]) => {
   return `${fmt.format(first)} - ${fmt.format(last)}`;
 };
 
+const investigationQuestions = (alert: Alert) => {
+  const sourceIp = firstIpLike(alert);
+  return [
+    "這件事要立刻找 IT 處理嗎？",
+    sourceIp ? `來源 ${sourceIp} 最近 7 天是否攻擊其他電腦？` : "",
+    `${alert.agent_name} 最近 24 小時還有其他異常嗎？`,
+    "產生一份給 IT 的調查摘要。",
+  ].filter(Boolean);
+};
+
+const buildInvestigationPrompt = (alert: Alert, question: string) => {
+  const endpoint = alert.technical_evidence?.endpoint;
+  const indicators = alert.technical_evidence?.indicators;
+  const lines = [
+    `問題：${question}`,
+    "",
+    "請針對這筆 Wazuh 事件調查：",
+    alert.summary ? `事件摘要：${alert.summary}` : "",
+    alert.agent_id ? `Agent ID：${alert.agent_id}` : endpoint?.agent_id ? `Agent ID：${endpoint.agent_id}` : "",
+    `電腦名稱：${alert.agent_name}`,
+    alert.agent_ip ? `電腦 IP：${alert.agent_ip}` : endpoint?.ip ? `電腦 IP：${endpoint.ip}` : "",
+    firstIpLike(alert) ? `來源 IP：${firstIpLike(alert)}` : "",
+    indicators?.username ? `帳號：${indicators.username}` : "",
+    alert.rule_id ? `Rule ID：${alert.rule_id}` : "",
+    alert.rule_level != null ? `Rule level：${alert.rule_level}` : "",
+    alert.timestamp ? `發生時間：${alert.timestamp}` : "",
+    "",
+    "回答請用繁體中文，第一句先給管理者結論：是否需要立刻請 IT 處理。",
+    "你只能調查與建議，不要說你已經封鎖、隔離或修改任何設備。",
+  ].filter(Boolean);
+  return lines.join("\n");
+};
+
+const evidenceSummary = (item: InvestigationEvidence) => {
+  if (item.tool === "search_security_events") return "已查 Wazuh 歷史事件";
+  if (item.tool === "get_wazuh_alerts") return "已讀取告警清單";
+  if (item.tool === "get_wazuh_running_agents") return "已確認在線電腦";
+  if (item.tool === "get_wazuh_agents") return "已查詢電腦清單";
+  if (item.tool === "check_agent_health") return "已確認電腦健康狀態";
+  if (item.tool === "get_agent_processes") return "已查詢執行中程序";
+  if (item.tool === "get_agent_ports") return "已查詢開放網路埠";
+  if (item.tool === "get_wazuh_cluster_health") return "已檢查 Wazuh 平台狀態";
+  return "已查詢 Wazuh 資料";
+};
+
 export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsProps) {
-  const alertGroups = groupPendingAlerts(alerts);
+  const bossAlerts = alerts.filter(isBossActionAlert);
+  const itAlerts = itFollowupAlerts(alerts);
+  const alertGroups = groupPendingAlerts(bossAlerts);
+  const [investigatingGroup, setInvestigatingGroup] = useState<AlertGroup | null>(null);
+  const [investigationMessages, setInvestigationMessages] = useState<InvestigationMessage[]>([]);
+  const [investigationEvidence, setInvestigationEvidence] = useState<InvestigationEvidence[]>([]);
+  const [investigationLoading, setInvestigationLoading] = useState(false);
   
   const handleAction = (group: AlertGroup, action: "it" | "ok" | "false") => {
     const statusMap: Record<string, AlertStatus> = {
@@ -156,6 +220,45 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
     });
   };
 
+  const openInvestigation = (group: AlertGroup) => {
+    setInvestigatingGroup(group);
+    setInvestigationMessages([]);
+    setInvestigationEvidence([]);
+  };
+
+  const runInvestigation = async (question: string) => {
+    if (!investigatingGroup || investigationLoading) return;
+    const alert = investigatingGroup.primary;
+    const prompt = buildInvestigationPrompt(alert, question);
+    const nextMessages = [
+      ...investigationMessages,
+      { role: "user" as const, content: question },
+    ];
+    setInvestigationMessages(nextMessages);
+    setInvestigationEvidence([]);
+    setInvestigationLoading(true);
+    try {
+      const response = await sendInvestigationMessage([
+        ...investigationMessages,
+        { role: "user", content: prompt },
+      ]);
+      setInvestigationMessages([
+        ...nextMessages,
+        { role: "assistant", content: response.answer_zh },
+      ]);
+      setInvestigationEvidence(response.evidence || []);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setInvestigationMessages([
+        ...nextMessages,
+        { role: "assistant", content: `調查失敗：${message}` },
+      ]);
+      toast.error("調查失敗", { description: message });
+    } finally {
+      setInvestigationLoading(false);
+    }
+  };
+
   if (alertGroups.length === 0) {
     return (
       <Card>
@@ -163,25 +266,35 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
           <CheckCircle2 className="mb-4 size-16 text-success" />
           <h3 className="text-xl font-semibold">沒有待處理事項</h3>
           <p className="mt-2 text-muted-foreground">
-            目前沒有需要您決定的資安事件
+            目前沒有需要老闆決定的資安事件
           </p>
+          {itAlerts.length > 0 && (
+            <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+              IT 仍有 {itAlerts.length} 件技術項目待確認，已放在告警紀錄裡。
+            </p>
+          )}
         </CardContent>
       </Card>
     );
   }
 
+  const investigatingAlert = investigatingGroup?.primary;
+  const investigatingCount = investigatingGroup?.alerts.length || 0;
+
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <AlertTriangle className="size-5 text-high" />
-          需要您決定的事項
+          今日需要決定
         </CardTitle>
         <CardDescription>
-          先確認是不是公司正常操作；不確定就交給 IT 查證
+          只列需要老闆判斷的事件；技術噪音已移到告警紀錄
           {alertGroups.some((group) => group.alerts.length > 1)
             ? "。同一台電腦的同類告警已合併顯示"
             : ""}
+          {itAlerts.length > 0 ? `。另有 ${itAlerts.length} 件 IT 待確認項目` : ""}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -255,6 +368,16 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
               {/* 簡化的動作按鈕 */}
               <div className="flex flex-wrap gap-2">
                 <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => openInvestigation(group)}
+                  className="gap-1"
+                >
+                  <Search data-icon="inline-start" />
+                  深入調查
+                </Button>
+                <Button
                   size="sm"
                   onClick={() => handleAction(group, "it")}
                   className="gap-1"
@@ -302,5 +425,161 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
         })}
       </CardContent>
     </Card>
+    <Sheet
+      open={Boolean(investigatingGroup)}
+      onOpenChange={(open) => {
+        if (!open) setInvestigatingGroup(null);
+      }}
+    >
+      <SheetContent className="w-[min(720px,calc(100vw-1rem))] gap-0 p-0 sm:max-w-none">
+        <SheetHeader className="border-b pr-12">
+          <SheetTitle>深入調查</SheetTitle>
+          <SheetDescription>
+            留在這筆事件流程內查 Wazuh 紀錄；這裡只查詢，不會封鎖或隔離任何設備。
+          </SheetDescription>
+        </SheetHeader>
+
+        {investigatingAlert && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="space-y-4 overflow-auto p-4">
+              <div className="rounded-lg border bg-muted/40 p-4">
+                <div className="text-xs font-medium text-muted-foreground">正在調查的事件</div>
+                <div className="mt-1 text-base font-semibold">
+                  {getPlainLanguageTitle(investigatingAlert)}
+                </div>
+                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                  <div>
+                    <div className="text-xs text-muted-foreground">電腦</div>
+                    <div>{investigatingAlert.agent_name}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">來源 IP</div>
+                    <div>{firstIpLike(investigatingAlert) || "-"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Rule</div>
+                    <div>
+                      {investigatingAlert.rule_id}
+                      {investigatingAlert.rule_level != null ? ` / level ${investigatingAlert.rule_level}` : ""}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">狀態</div>
+                    <div>{investigatingCount > 1 ? `同類 ${investigatingCount} 筆待確認` : "待確認"}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
+                調查只會讀取 Wazuh 紀錄並整理摘要，不會執行封鎖、隔離、停用帳號或修改設定。
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">先問這幾個問題</div>
+                <div className="flex flex-wrap gap-2">
+                  {investigationQuestions(investigatingAlert).map((question) => (
+                    <Button
+                      key={question}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={investigationLoading}
+                      onClick={() => void runInvestigation(question)}
+                    >
+                      {question}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {investigationMessages.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                    尚未開始調查。點上方問題後，系統會查 Wazuh 並把結果整理在這裡。
+                  </div>
+                ) : (
+                  investigationMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`rounded-lg border p-3 text-sm leading-6 ${
+                        message.role === "user" ? "bg-muted/50" : "bg-background"
+                      }`}
+                    >
+                      <div className="mb-1 text-xs font-medium text-muted-foreground">
+                        {message.role === "user" ? "調查問題" : "調查結果"}
+                      </div>
+                      <div className="whitespace-pre-line">{message.content}</div>
+                    </div>
+                  ))
+                )}
+                {investigationLoading && (
+                  <div className="flex items-center gap-2 rounded-lg border p-3 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    正在查 Wazuh 紀錄
+                  </div>
+                )}
+              </div>
+
+              {investigationEvidence.length > 0 && (
+                <details className="rounded-lg border p-3">
+                  <summary className="cursor-pointer text-sm font-medium">IT 查詢紀錄</summary>
+                  <div className="mt-3 space-y-2">
+                    {investigationEvidence.map((item, index) => (
+                      <div key={`${item.tool}-${index}`} className="rounded-md border bg-muted/30 p-3 text-xs">
+                        <div className="font-medium">{evidenceSummary(item)}</div>
+                        <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-muted-foreground">
+                          {JSON.stringify(item.args || {}, null, 2)}
+                          {"\n\n"}
+                          {item.result_preview || ""}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+
+            <SheetFooter className="border-t bg-card sm:flex-row sm:justify-between">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => {
+                    handleAction(investigatingGroup, "it");
+                    setInvestigatingGroup(null);
+                  }}
+                  className="gap-1"
+                >
+                  <Wrench data-icon="inline-start" />
+                  交給 IT 處理
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    handleAction(investigatingGroup, "ok");
+                    setInvestigatingGroup(null);
+                  }}
+                >
+                  <CheckCircle2 data-icon="inline-start" />
+                  確認正常
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    handleAction(investigatingGroup, "false");
+                    setInvestigatingGroup(null);
+                  }}
+                >
+                  <XCircle data-icon="inline-start" />
+                  標記誤報
+                </Button>
+              </div>
+              <Button variant="ghost" onClick={() => setInvestigatingGroup(null)}>
+                回到待辦
+              </Button>
+            </SheetFooter>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+    </>
   );
 }

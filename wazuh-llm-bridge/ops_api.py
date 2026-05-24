@@ -22,6 +22,7 @@ from pydantic import BaseModel
 import admin_auth
 import db
 import digest
+import investigation_chat
 import notification_settings
 import org_profile
 import sample_data
@@ -60,6 +61,15 @@ class SampleReplayRequest(BaseModel):
     category: str = "security"
     limit: int = 3
     min_level: int = 7
+
+
+class InvestigationChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class InvestigationChatRequest(BaseModel):
+    messages: list[InvestigationChatMessage]
 
 
 def _built_in_test_alert() -> dict[str, Any]:
@@ -471,6 +481,7 @@ def _alert_to_dashboard(row: dict[str, Any]) -> dict[str, Any]:
         raw_alert=raw_alert,
         llm=raw_llm,
     )
+    raw_agent = raw_alert.get("agent") if isinstance(raw_alert.get("agent"), dict) else {}
     return {
         "id": str(row.get("id")),
         "timestamp": datetime.fromtimestamp(float(row.get("received_at") or time.time()), timezone.utc).isoformat(),
@@ -478,6 +489,7 @@ def _alert_to_dashboard(row: dict[str, Any]) -> dict[str, Any]:
         "rule_level": int(row.get("rule_level") or 0),
         "rule_description": str(row.get("rule_description") or summary),
         "siem_source": str(row.get("siem_source") or "wazuh"),
+        "agent_id": str(raw_agent.get("id") or evidence.get("endpoint", {}).get("agent_id") or ""),
         "severity": _normalize_severity(row.get("llm_severity")),
         "agent_name": str(row.get("agent_name") or "unknown"),
         "agent_ip": str(row.get("agent_ip") or ""),
@@ -656,6 +668,26 @@ async def get_dashboard_service_status(request: Request) -> dict[str, Any]:
             "notifications_tested": sum(1 for c in channels.values() if c.get("lastTested")),
         },
     }
+
+
+@router.post("/api/dashboard/investigation/chat")
+async def investigation_chat_reply(payload: InvestigationChatRequest) -> dict[str, Any]:
+    try:
+        result = await investigation_chat.answer(
+            [message.dict() for message in payload.messages]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        detail = f"AI 或 MCP 服務回應錯誤：HTTP {exc.response.status_code}"
+        raise HTTPException(status_code=502, detail=detail) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"AI 或 MCP 服務連線失敗：{exc}") from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"調查對話失敗：{exc}") from exc
+    return result
 
 
 @router.get("/api/dashboard/summary")

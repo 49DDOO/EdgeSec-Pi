@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/sheet";
 import type { Alert, SeverityLevel } from "@/lib/types";
 import { severityLabels } from "@/lib/labels";
+import { bossActionAlerts, itFollowupAlerts } from "@/lib/alert-routing";
 import { format } from "date-fns";
 import { zhTW } from "date-fns/locale";
 
@@ -50,7 +51,8 @@ const getSeverityBadgeClass = (severity: SeverityLevel) => {
 };
 
 export function NotificationPanel({ open, onOpenChange, alerts, onAlertClick }: NotificationPanelProps) {
-  const pendingAlerts = alerts.filter((a) => a.status === "pending");
+  const pendingAlerts = bossActionAlerts(alerts);
+  const itAlerts = itFollowupAlerts(alerts);
   const recentAlerts = alerts.slice(0, 10);
 
   return (
@@ -64,11 +66,12 @@ export function NotificationPanel({ open, onOpenChange, alerts, onAlertClick }: 
           <SheetDescription>
             {pendingAlerts.length > 0 ? (
               <span className="text-destructive">
-                {pendingAlerts.length} 則待處理通知
+                {pendingAlerts.length} 則需要決定的通知
               </span>
             ) : (
-              "目前沒有待處理通知"
+              "目前沒有需要老闆決定的通知"
             )}
+            {pendingAlerts.length === 0 && itAlerts.length > 0 ? `；IT 另有 ${itAlerts.length} 件待確認` : ""}
           </SheetDescription>
         </SheetHeader>
         

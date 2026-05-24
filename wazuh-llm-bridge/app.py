@@ -212,16 +212,15 @@ async def analyze(alert: dict[str, Any],
     log.info("worker-%d triage rule=%s level=%s → %s",
              worker_id, rule_id, level, decision)
 
-    # Phase 3a — fetch historical context before building the prompt.
-    # This runs once for any LLM path (Stage-1 and/or agentic).
-    enrichment = await mcp_client.enrich_alert(alert)
-    if enrichment:
-        alert["_mcp_enrichment"] = enrichment       # picked up by build_prompt
-        log.info("worker-%d ← MCP enriched (%d chars)", worker_id, len(enrichment))
-
-    # Phase 3b — correlation: look up our own SQLite for related recent
+    # Phase 3a — correlation: look up our own SQLite for related recent
     # alerts (same srcip / same agent in the last 60 min). This is the
     # cheap, local equivalent of XDR cross-alert linking.
+    #
+    # MCP is deliberately NOT queried here. The bridge first does cheap
+    # routing + Stage-1 LLM triage; only admin policy, Stage-1
+    # needs_investigation=true, or an explicit Dashboard "深入調查" action
+    # may enter MCP-backed investigation. This keeps the flow explainable:
+    # "MCP is the investigation tool, not a hidden per-log preprocessor."
     try:
         data        = alert.get("data") or {}
         srcip       = data.get("srcip") or data.get("src_ip") or None

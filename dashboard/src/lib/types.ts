@@ -9,6 +9,7 @@ export interface Alert {
   rule_level?: number;
   rule_description: string;
   siem_source?: string;
+  agent_id?: string;
   severity: SeverityLevel;
   agent_name: string;
   agent_ip: string;
@@ -191,4 +192,20 @@ export interface AlertTrend {
   high: number;
   medium: number;
   low: number;
+}
+
+export interface InvestigationMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface InvestigationEvidence {
+  tool: string;
+  args: Record<string, unknown>;
+  result_preview?: string;
+}
+
+export interface InvestigationChatResponse {
+  answer_zh: string;
+  evidence: InvestigationEvidence[];
 }

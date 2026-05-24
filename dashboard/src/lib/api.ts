@@ -4,6 +4,8 @@ import type {
   AlertTrend,
   Endpoint,
   EndpointBusinessContext,
+  InvestigationChatResponse,
+  InvestigationMessage,
   NotificationConfig,
   RiskSummary,
   ServiceStatusResponse,
@@ -221,4 +223,32 @@ export async function requestEndpointRecheck(agentId: string): Promise<EndpointR
     throw new Error(await readError(response));
   }
   return (await response.json()) as EndpointRecheckResult;
+}
+
+export async function sendInvestigationMessage(
+  messages: InvestigationMessage[]
+): Promise<InvestigationChatResponse> {
+  const response = await fetch(apiUrl("/api/dashboard/investigation/chat"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as InvestigationChatResponse;
+}
+
+export function investigationHrefForAlert(alert: Alert) {
+  const params = new URLSearchParams();
+  params.set("alert_id", alert.id);
+  if (alert.agent_id) params.set("agent_id", alert.agent_id);
+  params.set("agent_name", alert.agent_name);
+  if (alert.agent_ip) params.set("agent_ip", alert.agent_ip);
+  if (alert.source_ip) params.set("source_ip", alert.source_ip);
+  if (alert.rule_id) params.set("rule_id", alert.rule_id);
+  if (alert.rule_level != null) params.set("level", String(alert.rule_level));
+  if (alert.timestamp) params.set("timestamp", alert.timestamp);
+  params.set("summary", alert.summary || alert.rule_description);
+  return `/investigation?${params.toString()}`;
 }

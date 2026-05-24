@@ -6,11 +6,11 @@ import {
   LayoutDashboard,
   Bell,
   Monitor,
-  TestTube2,
   Shield,
   ServerCog,
   ChevronLeft,
   ChevronRight,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,14 +19,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const navItems = [
   {
-    title: "資安總覽",
+    title: "今日待辦",
     href: "/",
     icon: LayoutDashboard,
-    description: "查看公司整體資安狀況",
+    description: "需要老闆決定的事項",
+  },
+  {
+    title: "告警紀錄",
+    href: "/?tab=alerts",
+    icon: AlertCircle,
+    description: "IT 查詢全部事件",
   },
   {
     title: "通知設定",
@@ -35,16 +41,10 @@ const navItems = [
     description: "LINE、Slack、Email 通知",
   },
   {
-    title: "設備管理",
+    title: "電腦背景",
     href: "/settings/endpoints",
     icon: Monitor,
-    description: "監控設備與 Agent 狀態",
-  },
-  {
-    title: "測試中心",
-    href: "/settings/testing",
-    icon: TestTube2,
-    description: "測試通知與 Wazuh Sample Data",
+    description: "端點與業務用途",
   },
   {
     title: "系統狀態",
@@ -57,6 +57,12 @@ const navItems = [
 export function SidebarNav() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(window.location.search), 0);
+    return () => window.clearTimeout(timer);
+  }, [pathname]);
 
   return (
     <aside
@@ -81,22 +87,33 @@ export function SidebarNav() {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-2">
         {navItems.map((item) => {
+          const tab = new URLSearchParams(search).get("tab");
           const isActive =
-            pathname === item.href ||
-            (item.href !== "/" && pathname.startsWith(item.href));
+            item.href === "/"
+              ? pathname === "/" && !tab
+              : item.href === "/?tab=alerts"
+                ? pathname === "/" && tab === "alerts"
+                : pathname === item.href || pathname.startsWith(item.href);
 
-          const linkContent = (
-            <Link
-              href={item.href}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
+          const linkClassName = cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+            isActive
+              ? "bg-primary/10 text-primary"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          );
+          const inner = (
+            <>
               <item.icon className="size-5 shrink-0" />
               {!collapsed && <span>{item.title}</span>}
+            </>
+          );
+          const linkContent = item.href.includes("?") ? (
+            <a href={item.href} className={linkClassName}>
+              {inner}
+            </a>
+          ) : (
+            <Link href={item.href} className={linkClassName}>
+              {inner}
             </Link>
           );
 

@@ -12,6 +12,7 @@ import { NotificationPanel } from "@/components/dashboard/notification-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
+import { bossActionAlerts, itFollowupAlerts } from "@/lib/alert-routing";
 import { fetchDashboardSummary, updateAlertStatus } from "@/lib/api";
 import type { DashboardSummary } from "@/lib/api";
 import type { AlertStatus } from "@/lib/types";
@@ -22,6 +23,7 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
+  const [currentTab, setCurrentTab] = useState("boss");
 
   useEffect(() => {
     let active = true;
@@ -40,7 +42,43 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const pendingCount = summary?.alerts.filter((a) => a.status === "pending").length ?? 0;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const tab = new URLSearchParams(window.location.search).get("tab");
+      if (tab && ["boss", "alerts", "endpoints", "it", "system"].includes(tab)) {
+        setCurrentTab(tab);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const ownerPendingCount = summary ? bossActionAlerts(summary.alerts).length : 0;
+  const itPendingCount = summary ? itFollowupAlerts(summary.alerts).length : 0;
+  const pageCopy = {
+    boss: {
+      title: "今日待辦",
+      description: "只顯示需要老闆決定的資安事項；技術項目交給 IT",
+    },
+    alerts: {
+      title: "告警紀錄",
+      description: "供 IT 或資安顧問查證、歸檔與追蹤",
+    },
+    endpoints: {
+      title: "電腦背景",
+      description: "維護受監控電腦、負責人與業務用途",
+    },
+    it: {
+      title: "IT 詳細",
+      description: "查看趨勢、端點健康與完整技術資料",
+    },
+    system: {
+      title: "系統狀態",
+      description: "檢查 EdgeSec-Pi、Wazuh、AI、進階查詢與通知是否正常",
+    },
+  }[currentTab] || {
+    title: "今日待辦",
+    description: "只顯示需要老闆決定的資安事項；技術項目交給 IT",
+  };
 
   const handleStatusChange = async (alertId: string, newStatus: AlertStatus) => {
     if (!summary) return;
@@ -77,9 +115,9 @@ export default function DashboardPage() {
       {/* Page Header */}
       <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
         <div>
-          <h1 className="text-xl font-semibold">資安總覽</h1>
+          <h1 className="text-xl font-semibold">{pageCopy.title}</h1>
           <p className="text-sm text-muted-foreground">
-            查看公司整體資安狀況與待處理事項
+            {pageCopy.description}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -90,11 +128,11 @@ export default function DashboardPage() {
             onClick={() => setNotificationPanelOpen(true)}
           >
             <Bell className="size-4" />
-            {pendingCount > 0 && (
-              <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
-                {pendingCount}
-              </span>
-            )}
+              {ownerPendingCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
+                  {ownerPendingCount}
+                </span>
+              )}
           </Button>
           <ThemeToggle />
         </div>
@@ -123,24 +161,32 @@ export default function DashboardPage() {
           </div>
         )}
         {summary && (
-        <Tabs defaultValue="boss" className="space-y-6">
+        <Tabs
+          value={currentTab}
+          onValueChange={(value) => {
+            setCurrentTab(value);
+            const url = value === "boss" ? "/" : `/?tab=${value}`;
+            window.history.replaceState(null, "", url);
+          }}
+          className="space-y-6"
+        >
           <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-flex">
             <TabsTrigger value="boss" className="gap-2">
               <LayoutDashboard className="size-4" />
-              <span className="hidden sm:inline">總覽</span>
+              <span className="hidden sm:inline">今日待辦</span>
             </TabsTrigger>
             <TabsTrigger value="alerts" className="gap-2">
               <AlertCircle className="size-4" />
-              <span className="hidden sm:inline">告警</span>
-              {pendingCount > 0 && (
-                <span className="ml-1 flex size-5 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
-                  {pendingCount}
+              <span className="hidden sm:inline">告警紀錄</span>
+              {itPendingCount > 0 && (
+                <span className="ml-1 flex size-5 items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">
+                  {itPendingCount}
                 </span>
               )}
             </TabsTrigger>
             <TabsTrigger value="endpoints" className="gap-2">
               <Server className="size-4" />
-              <span className="hidden sm:inline">設備</span>
+              <span className="hidden sm:inline">設備背景</span>
             </TabsTrigger>
             <TabsTrigger value="it" className="gap-2">
               <Wrench className="size-4" />
@@ -168,12 +214,9 @@ export default function DashboardPage() {
             </div>
           </TabsContent>
 
-          {/* 告警頁面 - 簡化版 */}
+          {/* 告警紀錄 - IT/顧問查全部事件 */}
           <TabsContent value="alerts">
-            <ActionableAlerts
-              alerts={summary.alerts}
-              onStatusChange={handleStatusChange}
-            />
+            <AlertsTable alerts={summary.alerts} onStatusChange={handleStatusChange} />
           </TabsContent>
 
           {/* 設備狀態 */}
