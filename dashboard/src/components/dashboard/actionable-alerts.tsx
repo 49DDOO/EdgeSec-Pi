@@ -26,7 +26,8 @@ import {
 import { TechnicalAlertDetails } from "@/components/dashboard/technical-alert-details";
 import { isBossActionAlert, itFollowupAlerts } from "@/lib/alert-routing";
 import { sendInvestigationMessage } from "@/lib/api";
-import type { Alert, AlertStatus, InvestigationEvidence, InvestigationMessage } from "@/lib/types";
+import type { Alert, AlertStatus, InvestigationEvidence } from "@/lib/types";
+import { useInvestigationSessions } from "@/lib/use-investigation-sessions";
 import { toast } from "sonner";
 
 interface ActionableAlertsProps {
@@ -199,9 +200,8 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
   const itAlerts = itFollowupAlerts(alerts);
   const alertGroups = groupPendingAlerts(bossAlerts);
   const [investigatingGroup, setInvestigatingGroup] = useState<AlertGroup | null>(null);
-  const [investigationMessages, setInvestigationMessages] = useState<InvestigationMessage[]>([]);
-  const [investigationEvidence, setInvestigationEvidence] = useState<InvestigationEvidence[]>([]);
   const [investigationLoading, setInvestigationLoading] = useState(false);
+  const { getSession, saveSession } = useInvestigationSessions();
   
   const handleAction = (group: AlertGroup, action: "it" | "ok" | "false") => {
     const statusMap: Record<string, AlertStatus> = {
@@ -222,37 +222,41 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
 
   const openInvestigation = (group: AlertGroup) => {
     setInvestigatingGroup(group);
-    setInvestigationMessages([]);
-    setInvestigationEvidence([]);
   };
 
   const runInvestigation = async (question: string) => {
     if (!investigatingGroup || investigationLoading) return;
     const alert = investigatingGroup.primary;
+    const sessionKey = `today:${investigatingGroup.key}`;
+    const currentSession = getSession(sessionKey);
     const prompt = buildInvestigationPrompt(alert, question);
     const nextMessages = [
-      ...investigationMessages,
+      ...currentSession.messages,
       { role: "user" as const, content: question },
     ];
-    setInvestigationMessages(nextMessages);
-    setInvestigationEvidence([]);
+    saveSession(sessionKey, { messages: nextMessages, evidence: [] });
     setInvestigationLoading(true);
     try {
       const response = await sendInvestigationMessage([
-        ...investigationMessages,
+        ...currentSession.messages,
         { role: "user", content: prompt },
       ]);
-      setInvestigationMessages([
-        ...nextMessages,
-        { role: "assistant", content: response.answer_zh },
-      ]);
-      setInvestigationEvidence(response.evidence || []);
+      saveSession(sessionKey, {
+        messages: [
+          ...nextMessages,
+          { role: "assistant", content: response.answer_zh },
+        ],
+        evidence: response.evidence || [],
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setInvestigationMessages([
-        ...nextMessages,
-        { role: "assistant", content: `調查失敗：${message}` },
-      ]);
+      saveSession(sessionKey, {
+        messages: [
+          ...nextMessages,
+          { role: "assistant", content: `調查失敗：${message}` },
+        ],
+        evidence: [],
+      });
       toast.error("調查失敗", { description: message });
     } finally {
       setInvestigationLoading(false);
@@ -280,6 +284,8 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
 
   const investigatingAlert = investigatingGroup?.primary;
   const investigatingCount = investigatingGroup?.alerts.length || 0;
+  const investigationSessionKey = investigatingGroup ? `today:${investigatingGroup.key}` : "";
+  const investigationSession = getSession(investigationSessionKey);
 
   return (
     <>
@@ -493,12 +499,12 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
               </div>
 
               <div className="space-y-3">
-                {investigationMessages.length === 0 ? (
+                {investigationSession.messages.length === 0 ? (
                   <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                     尚未開始調查。點上方問題後，系統會查 Wazuh 並把結果整理在這裡。
                   </div>
                 ) : (
-                  investigationMessages.map((message, index) => (
+                  investigationSession.messages.map((message, index) => (
                     <div
                       key={`${message.role}-${index}`}
                       className={`rounded-lg border p-3 text-sm leading-6 ${
@@ -520,11 +526,11 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
                 )}
               </div>
 
-              {investigationEvidence.length > 0 && (
+              {investigationSession.evidence.length > 0 && (
                 <details className="rounded-lg border p-3">
                   <summary className="cursor-pointer text-sm font-medium">IT 查詢紀錄</summary>
                   <div className="mt-3 space-y-2">
-                    {investigationEvidence.map((item, index) => (
+                    {investigationSession.evidence.map((item, index) => (
                       <div key={`${item.tool}-${index}`} className="rounded-md border bg-muted/30 p-3 text-xs">
                         <div className="font-medium">{evidenceSummary(item)}</div>
                         <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap text-muted-foreground">
