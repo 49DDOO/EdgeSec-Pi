@@ -27,7 +27,7 @@ MOCK_TRIAGE = {
 
 
 class FakeLLMClient:
-    async def post(self, url: str, json: dict[str, Any], timeout: float) -> httpx.Response:
+    async def post(self, url: str, json: dict[str, Any], timeout: float, **kwargs: Any) -> httpx.Response:
         await asyncio.sleep(0.2)
         request = httpx.Request("POST", url)
         return httpx.Response(

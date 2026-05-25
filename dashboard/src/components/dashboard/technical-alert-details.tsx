@@ -88,7 +88,11 @@ function ModuleContext({ evidence }: { evidence?: TechnicalEvidence }) {
   const labels: Record<string, string> = {
     check_title: "檢查項目",
     result: "結果",
+    description: "檢查說明",
     rationale: "原因",
+    checks_condition: "檢查條件",
+    checks: "檢查指令",
+    compliance: "合規對應",
     remediation: "補強步驟",
     cve: "CVE",
     cvss: "CVSS",
@@ -124,6 +128,62 @@ function ModuleContext({ evidence }: { evidence?: TechnicalEvidence }) {
 export function TechnicalAlertDetails({ alert, compact = false }: { alert: Alert; compact?: boolean }) {
   const iocs = iocValues(alert);
   const actionLines = splitActionLines(alert.recommended_action || remediationText(alert));
+
+  if (compact) {
+    return (
+      <div className="text-sm">
+        <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
+          {evidenceItems(alert).map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs font-medium text-muted-foreground">{label}</p>
+              <p className="break-words font-mono text-xs">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {iocs.length > 0 && (
+          <div className="mt-4">
+            <p className="text-xs font-medium text-muted-foreground">IOC / 可疑指標</p>
+            <div className="mt-1 flex flex-wrap gap-1">
+              {iocs.map((ioc) => (
+                <Badge key={ioc} variant="secondary" className="font-mono">
+                  {ioc}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(alert.root_cause || alert.technical_action) && (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {alert.root_cause && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">判斷原因</p>
+                <p className="text-xs">{alert.root_cause}</p>
+              </div>
+            )}
+            {alert.technical_action && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">技術處置原文</p>
+                <p className="text-xs">{alert.technical_action}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {rawLog(alert) && (
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+              原始 Log
+            </summary>
+            <pre className="mt-2 max-h-40 overflow-auto rounded-md bg-muted/40 p-2 text-xs">
+              {rawLog(alert)}
+            </pre>
+          </details>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">

@@ -36,6 +36,25 @@ def _first(*values: Any) -> str:
     return ""
 
 
+def _format_context_value(value: Any) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            rendered = _format_context_value(item)
+            if rendered:
+                parts.append(f"{key}: {rendered}")
+        return "\n".join(parts)
+    if isinstance(value, list):
+        return "\n".join(
+            rendered
+            for item in value
+            if (rendered := _format_context_value(item))
+        )
+    return _text(value)
+
+
 def _extract_ip(text: str) -> str:
     match = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text or "")
     return match.group(0) if match else ""
@@ -152,7 +171,20 @@ def _module_context(module: str, alert: dict[str, Any]) -> dict[str, Any]:
         return {
             "check_title": _text(check.get("title")),
             "result": _text(check.get("result")),
+            "description": _text(check.get("description")),
             "rationale": _text(check.get("rationale")),
+            "checks_condition": _text(check.get("condition")),
+            "checks": _format_context_value(
+                check.get("checks")
+                or check.get("rules")
+                or check.get("check")
+                or check.get("commands")
+            ),
+            "compliance": _format_context_value(
+                check.get("compliance")
+                or check.get("compliance_refs")
+                or check.get("requirements")
+            ),
             "remediation": _text(check.get("remediation")),
         }
     if module == "vulnerability":

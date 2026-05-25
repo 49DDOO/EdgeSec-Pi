@@ -31,6 +31,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 
+import llm_client
 import mcp_client
 
 log = logging.getLogger("agent-loop")
@@ -324,16 +325,14 @@ async def _llm_chat(messages: list[dict[str, Any]],
     """Send one chat completion request to LM Studio with tools enabled.
     Returns the assistant message dict (OpenAI shape)."""
     payload = {
-        "model":       LM_MODEL,
         "messages":    messages,
         "tools":       TOOLS,
         "tool_choice": "auto",
         "temperature": AGENTIC_TEMPERATURE,
         "stream":      False,
     }
-    r = await client.post(LM_STUDIO_URL, json=payload, timeout=90)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]
+    response = await llm_client.chat_completion(client, payload, timeout=90)
+    return response["choices"][0]["message"]
 
 
 def _strip_for_history(assistant_msg: dict) -> dict:

@@ -48,7 +48,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
 import db        # local module: SQLite persistence for alerts + LLM verdicts
+import detection_settings  # local module: dashboard category + LLM load controls
 import digest    # local module: daily freshness check (Wazuh ver / CVE feed / agents)
+import llm_client  # local module: configurable OpenAI-compatible model client
 import slack_actions  # local module: Socket Mode listener for interactive buttons
 import mcp_client     # local module: Wazuh MCP Server client (LLM enrichment)
 import triage_router  # local module: Phase 3 — 3-layer routing decision
@@ -208,6 +210,29 @@ async def analyze(alert: dict[str, Any],
     rule_id = rule.get("id", "?")
     level   = rule.get("level", "?")
 
+    enabled, category = detection_settings.is_enabled_for_alert(alert)
+    ai_config = llm_client.current_config()
+    if not enabled or not ai_config.get("enabled", True):
+        t0 = time.perf_counter()
+        parsed = detection_settings.lightweight_verdict(alert, category)
+        if enabled and not ai_config.get("enabled", True):
+            parsed["root_cause"] = "LLM analysis skipped because AI model analysis is disabled."
+            parsed["impact_zh"] = "AI 模型解析目前關閉；事件仍已入庫供稽核與追溯。"
+        answer = json.dumps(parsed, ensure_ascii=False)
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        log.info(
+            "worker-%d skip LLM rule=%s level=%s category=%s; storing raw alert",
+            worker_id,
+            rule_id,
+            level,
+            category,
+        )
+        try:
+            await db.save_alert(alert, answer, parsed, latency_ms, None, llm_status="skipped")
+        except Exception as e:
+            log.warning("worker-%d DB save failed: %s", worker_id, e)
+        return
+
     decision = triage_router.decide(alert)
     log.info("worker-%d triage rule=%s level=%s → %s",
              worker_id, rule_id, level, decision)
@@ -249,6 +274,7 @@ async def analyze(alert: dict[str, Any],
     parsed:    Optional[dict[str, Any]]  = None
     evidence:  Optional[list[dict]]      = None
     error_msg: Optional[str]             = None
+    recoverable_error_msg: Optional[str] = None
 
     # ── Direct-to-agentic (admin FORCE policy) ────────────────────────
     if decision == "agentic":
@@ -261,7 +287,7 @@ async def analyze(alert: dict[str, Any],
             parsed = verdict
             answer = json.dumps(verdict, ensure_ascii=False)
         except Exception as e:
-            error_msg = f"agentic failed: {e!r}"
+            recoverable_error_msg = f"agentic failed: {e!r}"
             log.warning("worker-%d agentic loop failed (%s); falling back to Stage-1",
                         worker_id, e)
             decision = "quick"        # fall through into Stage-1 below
@@ -270,7 +296,6 @@ async def analyze(alert: dict[str, Any],
     if decision in ("quick", "llm_decides"):
         log.info("worker-%d → LM Studio Stage-1 (route=%s)", worker_id, decision)
         s1_payload = {
-            "model":       LM_MODEL,
             "messages":    [{"role": "user", "content": prompt}],
             "temperature": 0.1,
             "stream":      False,
@@ -280,14 +305,16 @@ async def analyze(alert: dict[str, Any],
             # reliably; parse_llm_reply tolerates imperfect JSON.
         }
         try:
-            r = await client.post(LM_STUDIO_URL, json=s1_payload, timeout=LM_TIMEOUT_S)
-            r.raise_for_status()
-            answer = r.json()["choices"][0]["message"]["content"].strip()
+            response = await llm_client.chat_completion(client, s1_payload)
+            answer = response["choices"][0]["message"]["content"].strip()
             parsed = prompting.parse_llm_reply(answer)
+            if recoverable_error_msg:
+                log.info("worker-%d Stage-1 fallback succeeded after %s",
+                         worker_id, recoverable_error_msg)
             log.info("worker-%d ← Stage-1 reply=%r", worker_id, answer[:200])
         except (httpx.HTTPError, KeyError, ValueError) as e:
             err_s1 = f"stage1: {e!r}"
-            error_msg = f"{error_msg} | {err_s1}" if error_msg else err_s1
+            error_msg = f"{recoverable_error_msg} | {err_s1}" if recoverable_error_msg else err_s1
             log.warning("worker-%d Stage-1 error: %s", worker_id, e)
 
         # Stage-2 escalation: only on the LLM-deciding path, only when
@@ -307,7 +334,6 @@ async def analyze(alert: dict[str, Any],
                 answer = json.dumps(verdict, ensure_ascii=False)
             except Exception as e:
                 err_a = f"agentic-escalate: {e!r}"
-                error_msg = f"{error_msg} | {err_a}" if error_msg else err_a
                 log.warning("worker-%d agentic escalation failed: %s "
                             "(falling back to Stage-1 verdict)", worker_id, e)
                 # answer + parsed from Stage-1 remain; we still notify on those.

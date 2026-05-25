@@ -5,12 +5,15 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Bell,
+  Download,
   Monitor,
   Shield,
   ServerCog,
   ChevronLeft,
   ChevronRight,
   AlertCircle,
+  SlidersHorizontal,
+  BrainCircuit,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -21,36 +24,69 @@ import {
 } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 
-const navItems = [
+const navSections = [
   {
-    title: "今日待辦",
-    href: "/",
-    icon: LayoutDashboard,
-    description: "需要老闆決定的事項",
+    title: "營運",
+    items: [
+      {
+        title: "今日待辦",
+        href: "/",
+        icon: LayoutDashboard,
+        description: "需要老闆決定的事項",
+      },
+      {
+        title: "告警紀錄",
+        href: "/?tab=alerts",
+        icon: AlertCircle,
+        description: "IT 查詢告警事件",
+      },
+    ],
   },
   {
-    title: "告警紀錄",
-    href: "/?tab=alerts",
-    icon: AlertCircle,
-    description: "IT 查詢全部事件",
+    title: "電腦",
+    items: [
+      {
+        title: "電腦背景",
+        href: "/settings/endpoints?section=inventory",
+        icon: Monitor,
+        description: "端點狀態與業務用途",
+      },
+      {
+        title: "電腦安裝",
+        href: "/settings/endpoints?section=install",
+        icon: Download,
+        description: "下載與複製 Agent 安裝方式",
+      },
+    ],
   },
   {
-    title: "通知設定",
-    href: "/settings/notifications",
-    icon: Bell,
-    description: "LINE、Slack、Email 通知",
-  },
-  {
-    title: "電腦背景",
-    href: "/settings/endpoints",
-    icon: Monitor,
-    description: "端點與業務用途",
-  },
-  {
-    title: "系統狀態",
-    href: "/settings/status",
-    icon: ServerCog,
-    description: "查看 Bridge、Wazuh、AI 與通知是否正常",
+    title: "設定",
+    items: [
+      {
+        title: "偵測類別",
+        href: "/settings/detections",
+        icon: SlidersHorizontal,
+        description: "告警紀錄分頁與類別顯示",
+      },
+      {
+        title: "AI模型設定",
+        href: "/settings/ai-model",
+        icon: BrainCircuit,
+        description: "本地或雲端模型",
+      },
+      {
+        title: "通知設定",
+        href: "/settings/notifications",
+        icon: Bell,
+        description: "LINE、Slack、Email 通知",
+      },
+      {
+        title: "系統狀態",
+        href: "/settings/status",
+        icon: ServerCog,
+        description: "查看 Bridge、Wazuh、AI 與通知是否正常",
+      },
+    ],
   },
 ];
 
@@ -63,6 +99,10 @@ export function SidebarNav() {
     const timer = window.setTimeout(() => setSearch(window.location.search), 0);
     return () => window.clearTimeout(timer);
   }, [pathname]);
+
+  const searchParams = new URLSearchParams(search);
+  const tab = searchParams.get("tab");
+  const section = searchParams.get("section");
 
   return (
     <aside
@@ -86,53 +126,68 @@ export function SidebarNav() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-2">
-        {navItems.map((item) => {
-          const tab = new URLSearchParams(search).get("tab");
-          const isActive =
-            item.href === "/"
-              ? pathname === "/" && !tab
-              : item.href === "/?tab=alerts"
-                ? pathname === "/" && tab === "alerts"
-                : pathname === item.href || pathname.startsWith(item.href);
+        {navSections.map((group) => (
+          <div key={group.title} className="space-y-1 py-1">
+            {!collapsed && (
+              <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {group.title}
+              </div>
+            )}
+            {group.items.map((item) => {
+              const [hrefPath, hrefQuery = ""] = item.href.split("?");
+              const itemParams = new URLSearchParams(hrefQuery);
+              const itemTab = itemParams.get("tab");
+              const itemSection = itemParams.get("section");
+              const isActive =
+                item.href === "/"
+                  ? pathname === "/" && !tab
+                  : itemTab
+                    ? pathname === hrefPath && tab === itemTab
+                    : itemSection
+                      ? pathname === hrefPath && (section === itemSection || (!section && itemSection === "inventory"))
+                      : pathname === hrefPath || pathname.startsWith(`${hrefPath}/`);
 
-          const linkClassName = cn(
-            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-            isActive
-              ? "bg-primary/10 text-primary"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground"
-          );
-          const inner = (
-            <>
-              <item.icon className="size-5 shrink-0" />
-              {!collapsed && <span>{item.title}</span>}
-            </>
-          );
-          const linkContent = item.href.includes("?") ? (
-            <a href={item.href} className={linkClassName}>
-              {inner}
-            </a>
-          ) : (
-            <Link href={item.href} className={linkClassName}>
-              {inner}
-            </Link>
-          );
+              const linkClassName = cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                isActive
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              );
+              const inner = (
+                <>
+                  <item.icon className="size-5 shrink-0" />
+                  {!collapsed && <span>{item.title}</span>}
+                </>
+              );
+              const shouldUseDocumentNavigation = item.href === "/" || item.href.includes("?");
+              const linkContent = shouldUseDocumentNavigation ? (
+                <a href={item.href} className={linkClassName}>
+                  {inner}
+                </a>
+              ) : (
+                <Link href={item.href} className={linkClassName}>
+                  {inner}
+                </Link>
+              );
 
-          if (collapsed) {
-            return (
-              <Tooltip key={item.href}>
-                <TooltipTrigger render={linkContent} />
-                <TooltipContent side="right" className="flex flex-col gap-1">
-                  <span className="font-medium">{item.title}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {item.description}
-                  </span>
-                </TooltipContent>
-              </Tooltip>
-            );
-          }
+              if (collapsed) {
+                return (
+                  <Tooltip key={item.href}>
+                    <TooltipTrigger render={linkContent} />
+                    <TooltipContent side="right" className="flex flex-col gap-1">
+                      <span className="font-medium">{item.title}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {item.description}
+                      </span>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }
 
-          return <div key={item.href}>{linkContent}</div>;
-        })}
+              return <div key={item.href}>{linkContent}</div>;
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Collapse Toggle */}

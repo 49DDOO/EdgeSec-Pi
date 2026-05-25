@@ -15,14 +15,15 @@ from typing import Any
 
 import httpx
 
+import llm_client
 import mcp_client
 
 log = logging.getLogger("investigation-chat")
 
 LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
 LM_MODEL = os.getenv("LM_MODEL", "local-model")
-CHAT_TIMEOUT_S = float(os.getenv("INVESTIGATION_CHAT_TIMEOUT_S", "120"))
-MAX_TOOL_ROUNDS = int(os.getenv("INVESTIGATION_CHAT_MAX_TOOL_ROUNDS", "4"))
+CHAT_TIMEOUT_S = float(os.getenv("INVESTIGATION_CHAT_TIMEOUT_S", "45"))
+MAX_TOOL_ROUNDS = int(os.getenv("INVESTIGATION_CHAT_MAX_TOOL_ROUNDS", "2"))
 TOOL_RESULT_MAX_CHARS = int(os.getenv("INVESTIGATION_CHAT_TOOL_RESULT_MAX", "1800"))
 
 
@@ -173,8 +174,10 @@ async def answer(messages: list[dict[str, str]]) -> dict[str, Any]:
         {
             "role": "system",
             "content": (
-                "你是 EdgeSec-Pi 的資安調查助理。你可以用 Wazuh MCP 工具查告警、"
-                "端點狀態、程序與網路埠。回答要用繁體中文台灣用語，先講結論，再列出"
+                "你是 EdgeSec-Pi 的資安調查助理。Wazuh 告警已經先由系統翻成白話，"
+                "你只在使用者明確要求查證時，用 Wazuh MCP 工具查告警、端點狀態、程序與網路埠。"
+                "每次回答最多做必要的 1 到 2 個查詢，不要為了完整性展開過多工具呼叫。"
+                "回答要用繁體中文台灣用語，先講結論，再列出"
                 "查到的證據與下一步。不要假裝已經執行封鎖、隔離、刪檔或停用帳號；"
                 "你現在只能調查與建議。若資料不足，清楚說還缺什麼。"
                 "所有重大結論都必須由本次工具查詢結果支撐。若工具結果沒有明確出現"
@@ -245,10 +248,9 @@ async def answer(messages: list[dict[str, str]]) -> dict[str, Any]:
 
 
 async def _llm_chat(client: httpx.AsyncClient, messages: list[dict[str, Any]]) -> dict[str, Any]:
-    response = await client.post(
-        LM_STUDIO_URL,
-        json={
-            "model": LM_MODEL,
+    response = await llm_client.chat_completion(
+        client,
+        {
             "messages": messages,
             "tools": TOOLS,
             "tool_choice": "auto",
@@ -256,8 +258,7 @@ async def _llm_chat(client: httpx.AsyncClient, messages: list[dict[str, Any]]) -
             "stream": False,
         },
     )
-    response.raise_for_status()
-    return response.json()["choices"][0]["message"]
+    return response["choices"][0]["message"]
 
 
 def _sanitize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:

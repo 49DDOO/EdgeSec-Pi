@@ -29,10 +29,10 @@ import type {
 import { cn } from "@/lib/utils";
 
 const examples = [
-  "今天有沒有需要立刻請 IT 處理的事件？",
-  "目前有哪些電腦在線或離線？",
-  "最近 24 小時有哪些高風險事件？",
-  "幫我產生一份給 IT 的調查摘要。",
+  "查目前有哪些電腦在線或離線",
+  "查最近 24 小時有哪些高風險事件",
+  "查今天有沒有需要立刻請 IT 處理的事件",
+  "產生一份給 IT 的查證摘要",
 ];
 
 interface InvestigationContext {
@@ -152,7 +152,7 @@ export default function InvestigationPage() {
   const [messages, setMessages] = useState<InvestigationMessage[]>([
     {
       role: "assistant",
-      content: "請從資安事件點進來調查，或輸入明確的電腦、來源 IP、時間範圍。",
+      content: "請從某筆資安事件點進來查證，或輸入明確的電腦、來源 IP、時間範圍。一般告警會先由 LLM 翻成白話；這裡只在需要更多線索時才查 Wazuh。",
     },
   ]);
   const [evidence, setEvidence] = useState<InvestigationEvidence[]>([]);
@@ -195,7 +195,7 @@ export default function InvestigationPage() {
           nextContext.agentName ? `電腦：${nextContext.agentName}` : "",
           nextContext.agentId ? `Agent ID：${nextContext.agentId}` : "",
           nextContext.sourceIp ? `來源 IP：${nextContext.sourceIp}` : "",
-          "請直接點下方問題，系統會查 Wazuh 紀錄並整理成白話結論。",
+          "這筆告警已先完成白話摘要。若需要更多線索，再點下方問題啟動 MCP 查 Wazuh 紀錄。",
         ].filter(Boolean);
         setMessages([{ role: "assistant", content: lines.join("\n") }]);
       }
@@ -265,8 +265,8 @@ export default function InvestigationPage() {
             <MessageSquareText className="size-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold">深入調查</h1>
-            <p className="text-sm text-muted-foreground">查 Wazuh 紀錄，整理給管理者與 IT</p>
+            <h1 className="text-xl font-semibold">MCP 查證</h1>
+            <p className="text-sm text-muted-foreground">需要更多線索時，才透過 MCP 查 Wazuh</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -284,14 +284,14 @@ export default function InvestigationPage() {
             <div className="mx-auto flex max-w-4xl flex-col gap-4">
               <Card className="border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
                 <CardContent className="p-4 text-sm leading-6">
-                  這裡只會查詢 Wazuh 紀錄並產生調查摘要，不會封鎖 IP、不會隔離電腦，也不會修改任何系統設定。
+                  告警會先由 LLM 翻成白話；這頁是按需 MCP 查證工具。送出問題後才會讀取 Wazuh 紀錄，不會封鎖 IP、不會隔離電腦，也不會修改任何系統設定。
                 </CardContent>
               </Card>
               {context.alertId && (
                 <Card className="border-primary/20 bg-primary/5">
                   <CardContent className="grid gap-3 p-4 text-sm sm:grid-cols-2">
                     <div className="sm:col-span-2">
-                      <div className="text-xs font-medium text-muted-foreground">正在調查的事件</div>
+                      <div className="text-xs font-medium text-muted-foreground">LLM 白話摘要</div>
                       <div className="mt-1 font-medium">{context.summary || "Wazuh 告警"}</div>
                     </div>
                     <div>
@@ -323,7 +323,7 @@ export default function InvestigationPage() {
                   </div>
                   <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
-                    正在查詢
+                    正在透過 MCP 查 Wazuh
                   </div>
                 </div>
               )}
@@ -360,7 +360,7 @@ export default function InvestigationPage() {
                     }
                   }}
                   className="max-h-40 min-h-20 resize-none"
-                  placeholder="例如：這件事要立刻找 IT 處理嗎？"
+                  placeholder="例如：查這台電腦最近 24 小時是否還有異常"
                   disabled={loading}
                 />
                 <Button type="submit" size="icon-lg" disabled={!canSend} aria-label="送出">
@@ -374,7 +374,7 @@ export default function InvestigationPage() {
         <aside className="min-h-0 overflow-auto bg-muted/20 p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium">
             <AlertTriangle className="size-4 text-amber-600" />
-            IT 查詢紀錄
+            MCP 查詢紀錄
           </div>
           <EvidenceList evidence={evidence} />
         </aside>

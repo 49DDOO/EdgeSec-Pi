@@ -17,6 +17,8 @@ from typing import Any
 
 import httpx
 
+import llm_client
+
 LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
 LM_MODEL = os.getenv("LM_MODEL", "local-model")
 TIMEOUT_S = float(os.getenv("SCA_EXPLAIN_TIMEOUT_S", "12"))
@@ -119,10 +121,9 @@ async def _llm_explain(check: dict[str, Any], client: httpx.AsyncClient) -> dict
 JSON schema:
 {{"title_zh":"...", "action_zh":"..."}}
 """.strip()
-    response = await client.post(
-        LM_STUDIO_URL,
-        json={
-            "model": LM_MODEL,
+    response = await llm_client.chat_completion(
+        client,
+        {
             "messages": [
                 {"role": "system", "content": "你只輸出有效 JSON。"},
                 {"role": "user", "content": prompt},
@@ -131,8 +132,7 @@ JSON schema:
         },
         timeout=TIMEOUT_S,
     )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
+    content = response["choices"][0]["message"]["content"]
     parsed = _extract_json(content)
     title_zh = str(parsed.get("title_zh") or "").strip()
     action_zh = str(parsed.get("action_zh") or "").strip()

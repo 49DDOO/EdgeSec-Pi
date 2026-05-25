@@ -20,9 +20,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import admin_auth
+import ai_settings
 import db
+import detection_settings
 import digest
 import investigation_chat
+import llm_client
 import notification_settings
 import org_profile
 import sample_data
@@ -55,6 +58,31 @@ class EndpointBusinessPatch(BaseModel):
 
 class NotificationSettingsPatch(BaseModel):
     values: dict[str, Any] = {}
+
+
+class DetectionSettingsPatch(BaseModel):
+    enabled: dict[str, bool] = {}
+
+
+class AiSettingsPatch(BaseModel):
+    enabled: Optional[bool] = None
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    clear_api_key: bool = False
+    timeout_s: Optional[float] = None
+    max_concurrent_requests: Optional[int] = None
+
+
+class AiProviderUseRequest(BaseModel):
+    provider: str
+
+
+class AiModelListRequest(BaseModel):
+    provider: str
+    base_url: str
+    api_key: Optional[str] = None
 
 
 class SampleReplayRequest(BaseModel):
@@ -698,10 +726,11 @@ async def get_dashboard_summary(request: Request) -> dict[str, Any]:
     bundles the already-known bridge state and Wazuh inventory into one stable
     shape for the Next.js UI.
     """
-    stats, status, alerts = await asyncio.gather(
+    stats, status, alerts, alert_trends = await asyncio.gather(
         db.compute_stats(),
         digest.collect_status(),
         db.list_alerts(limit=80, include_sampledata=False),
+        db.alert_trends(days=7, include_sampledata=False),
     )
     queue: Optional[asyncio.Queue] = getattr(request.app.state, "queue", None)
     endpoints, wazuh_connection = await _dashboard_endpoints()
@@ -721,18 +750,13 @@ async def get_dashboard_summary(request: Request) -> dict[str, Any]:
             "llm_service": "degraded" if int(stats.get("errors_last_24h") or 0) else "healthy",
         },
         "notifications": notifications,
+        "detectionCategories": detection_settings.load(),
         "install": {
             "manager_host": os.getenv("MANAGER_HOST", "").strip() or "localhost",
             "bridge_public_url": os.getenv("BRIDGE_PUBLIC_URL", "").strip(),
             "wazuh_agent_version": os.getenv("WAZUH_AGENT_VERSION", "4.14.5"),
         },
-        "alertTrends": [{
-            "date": datetime.now().strftime("%m/%d"),
-            "critical": int((stats.get("by_severity_24h") or {}).get("critical") or 0),
-            "high": int((stats.get("by_severity_24h") or {}).get("high") or 0),
-            "medium": int((stats.get("by_severity_24h") or {}).get("medium") or 0),
-            "low": int((stats.get("by_severity_24h") or {}).get("low") or 0),
-        }],
+        "alertTrends": alert_trends,
     }
 
 
@@ -826,6 +850,68 @@ async def put_endpoint_business_context(
 @router.get("/api/dashboard/notifications")
 async def get_dashboard_notifications() -> dict[str, Any]:
     return _notifications_payload()
+
+
+@router.get("/api/dashboard/detection-categories")
+async def get_dashboard_detection_categories() -> dict[str, Any]:
+    return detection_settings.load()
+
+
+@router.put("/api/dashboard/detection-categories")
+async def put_dashboard_detection_categories(payload: DetectionSettingsPatch) -> dict[str, Any]:
+    try:
+        return detection_settings.save(payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/dashboard/ai-settings")
+async def get_dashboard_ai_settings() -> dict[str, Any]:
+    return ai_settings.load()
+
+
+@router.put("/api/dashboard/ai-settings")
+async def put_dashboard_ai_settings(payload: AiSettingsPatch) -> dict[str, Any]:
+    values = payload.dict(exclude_none=True)
+    try:
+        return ai_settings.save(values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/dashboard/ai-settings/use")
+async def post_dashboard_ai_settings_use(payload: AiProviderUseRequest) -> dict[str, Any]:
+    try:
+        return ai_settings.use_provider(payload.provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/dashboard/ai-settings/test")
+async def post_dashboard_ai_settings_test() -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient() as client:
+            result = await llm_client.test_connection(client)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI 模型連線測試失敗：{exc}")
+    result["message"] = "AI 模型連線測試成功"
+    return result
+
+
+@router.post("/api/dashboard/ai-settings/models")
+async def post_dashboard_ai_settings_models(payload: AiModelListRequest) -> dict[str, Any]:
+    try:
+        current = ai_settings.load(include_secret=True)
+        provider_config = next(
+            (item for item in current.get("providers", []) if item.get("key") == payload.provider),
+            {},
+        )
+        api_key = str(payload.api_key or provider_config.get("api_key") or "")
+        async with httpx.AsyncClient() as client:
+            models = await llm_client.list_models(client, payload.base_url, api_key=api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"讀取模型清單失敗：{exc}")
+    return {"models": models, "message": f"找到 {len(models)} 個模型"}
 
 
 @router.put("/api/dashboard/notifications/{channel}")

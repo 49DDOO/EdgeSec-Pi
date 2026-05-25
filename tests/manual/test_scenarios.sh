@@ -2,11 +2,8 @@
 
 # ── Load bridge config ─────────────────────────────────
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_BRIDGE_ENV="$_SCRIPT_DIR/../../bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
+# shellcheck disable=SC1091
+source "$_SCRIPT_DIR/../../scripts/lib/load-config.sh"
 
 #
 # test_scenarios.sh — 7 個情境的多樣性壓力測試
@@ -21,7 +18,7 @@ BRIDGE_PORT="${BRIDGE_PORT:-8001}"
 #
 
 set -e
-BRIDGE_HOST=${BRIDGE_HOST:-http://localhost:$BRIDGE_PORT}
+BRIDGE_HOST=${BRIDGE_HOST:-$BRIDGE_LOCAL_BASE}
 URL="${BRIDGE_HOST}/webhook"
 HEALTH="${BRIDGE_HOST}/health"
 

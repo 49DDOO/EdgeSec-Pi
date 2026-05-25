@@ -24,6 +24,53 @@ This runs:
 
 It does not require Docker, real Wazuh, real LM Studio, or Slack.
 
+## Batch Test Runner With Logs
+
+For a single command that runs grouped checks and writes logs to files:
+
+```bash
+./test_sys/run_all.sh quick
+```
+
+Logs are written under:
+
+```text
+test_sys/logs/YYYYMMDD-HHMMSS/
+```
+
+Available modes:
+
+| Command | Scope |
+|---------|-------|
+| `./test_sys/run_all.sh quick` | Backend default tests and dashboard lint/build. |
+| `./test_sys/run_all.sh env` | Local service readiness check. |
+| `./test_sys/run_all.sh release` | `quick` plus quality gate and mock eval. |
+| `./test_sys/run_all.sh full` | `release` plus service readiness, real LM Studio model test, and Wazuh E2E smoke test. |
+| `./test_sys/run_all.sh manual` | Prints manual interactive test entrypoints. |
+
+## Unified Port / URL Config
+
+Service ports and non-secret URLs are managed from:
+
+```text
+bridge.env
+```
+
+Shell scripts load the shared parser:
+
+```text
+scripts/lib/load-config.sh
+```
+
+To see the effective config before running real-environment tests:
+
+```bash
+./scripts/run.sh config
+```
+
+`wazuh-llm-bridge/.env` should be used for secrets such as tokens and passwords.
+When the same port or URL exists in both files, `bridge.env` wins.
+
 ## Test Categories
 
 | Command | Scope | External dependencies |

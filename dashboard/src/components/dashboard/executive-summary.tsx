@@ -15,6 +15,7 @@ export function ExecutiveSummary({ data, alerts, endpointCount }: ExecutiveSumma
   const ownerAlerts = bossActionAlerts(alerts);
   const itAlerts = itFollowupAlerts(alerts);
   const criticalPending = ownerAlerts.filter((a) => a.severity === "critical");
+  const hiddenByCategoryCount = Math.max(data.total_alerts_today - alerts.length, 0);
   
   // 根據風險等級決定整體狀態
   const getOverallStatus = () => {
@@ -88,7 +89,7 @@ export function ExecutiveSummary({ data, alerts, endpointCount }: ExecutiveSumma
   };
 
   return (
-    <Card className={`relative overflow-hidden border-2 ${status.borderColor}`}>
+    <Card className={`relative overflow-hidden ${status.borderColor}`}>
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Clock className="size-4" />
@@ -133,8 +134,10 @@ export function ExecutiveSummary({ data, alerts, endpointCount }: ExecutiveSumma
             <div className="text-2xl font-bold">{endpointCount} 台</div>
           </div>
           <div className="text-center">
-            <div className="text-sm text-muted-foreground">今日事件</div>
-            <div className="text-2xl font-bold text-muted-foreground">{data.total_alerts_today} 件</div>
+            <div className="text-sm text-muted-foreground">
+              {hiddenByCategoryCount > 0 ? "顯示事件" : "今日事件"}
+            </div>
+            <div className="text-2xl font-bold text-muted-foreground">{alerts.length} 件</div>
           </div>
         </div>
       </CardContent>

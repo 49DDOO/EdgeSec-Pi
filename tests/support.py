@@ -72,6 +72,8 @@ def fresh_bridge_import(module_names: Iterable[str]) -> dict[str, ModuleType]:
         "org_profile",
         "owner_context",
         "prompting",
+        "remote_action_tokens",
+        "slack_action_tokens",
         "slack_actions",
         "slack_render",
         "triage_router",

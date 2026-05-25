@@ -1,22 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExecutiveSummary } from "@/components/dashboard/executive-summary";
 import { ActionableAlerts } from "@/components/dashboard/actionable-alerts";
 import { DeviceStatus } from "@/components/dashboard/device-status";
 import { AlertTrendChart } from "@/components/dashboard/alert-trend-chart";
 import { AlertsTable } from "@/components/dashboard/alerts-table";
-import { EndpointsMonitor } from "@/components/dashboard/endpoints-monitor";
-import { SystemStatus } from "@/components/dashboard/system-status";
 import { NotificationPanel } from "@/components/dashboard/notification-panel";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
-import { bossActionAlerts, itFollowupAlerts } from "@/lib/alert-routing";
+import { bossActionAlerts } from "@/lib/alert-routing";
 import { fetchDashboardSummary, updateAlertStatus } from "@/lib/api";
+import { filterAlertsByEnabledCategories } from "@/lib/detection-categories";
 import type { DashboardSummary } from "@/lib/api";
 import type { AlertStatus } from "@/lib/types";
-import { LayoutDashboard, AlertCircle, Server, Settings, Wrench, Bell, Loader2 } from "lucide-react";
+import { Bell, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function DashboardPage() {
@@ -24,6 +22,7 @@ export default function DashboardPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
   const [currentTab, setCurrentTab] = useState("boss");
+  const [alertEndpointFilter, setAlertEndpointFilter] = useState("all");
 
   useEffect(() => {
     let active = true;
@@ -45,15 +44,49 @@ export default function DashboardPage() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const tab = new URLSearchParams(window.location.search).get("tab");
-      if (tab && ["boss", "alerts", "endpoints", "it", "system"].includes(tab)) {
+      if (tab === "system") {
+        window.location.replace("/settings/status");
+        return;
+      }
+      if (tab === "endpoints") {
+        window.location.replace("/settings/endpoints?section=inventory");
+        return;
+      }
+      if (tab === "it") {
+        setCurrentTab("alerts");
+        window.history.replaceState(null, "", "/?tab=alerts");
+        return;
+      }
+      if (tab && ["boss", "alerts"].includes(tab)) {
         setCurrentTab(tab);
       }
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
-  const ownerPendingCount = summary ? bossActionAlerts(summary.alerts).length : 0;
-  const itPendingCount = summary ? itFollowupAlerts(summary.alerts).length : 0;
+  const visibleAlerts = useMemo(
+    () => summary
+      ? filterAlertsByEnabledCategories(summary.alerts, summary.detectionCategories)
+      : [],
+    [summary]
+  );
+  const alertEndpointOptions = useMemo(
+    () => {
+      const names = new Set<string>();
+      visibleAlerts.forEach((alert) => {
+        if (alert.agent_name) names.add(alert.agent_name);
+      });
+      summary?.alertTrends.forEach((trend) => {
+        Object.keys(trend.endpoints || {}).forEach((endpoint) => names.add(endpoint));
+      });
+      return Array.from(names).sort((a, b) => a.localeCompare(b));
+    },
+    [summary, visibleAlerts]
+  );
+  const filteredAlertRecords = alertEndpointFilter === "all"
+    ? visibleAlerts
+    : visibleAlerts.filter((alert) => alert.agent_name === alertEndpointFilter);
+  const ownerPendingCount = bossActionAlerts(visibleAlerts).length;
   const pageCopy = {
     boss: {
       title: "今日待辦",
@@ -62,18 +95,6 @@ export default function DashboardPage() {
     alerts: {
       title: "告警紀錄",
       description: "供 IT 或資安顧問查證、歸檔與追蹤",
-    },
-    endpoints: {
-      title: "電腦背景",
-      description: "維護受監控電腦、負責人與業務用途",
-    },
-    it: {
-      title: "IT 詳細",
-      description: "查看趨勢、端點健康與完整技術資料",
-    },
-    system: {
-      title: "系統狀態",
-      description: "檢查 EdgeSec-Pi、Wazuh、AI、進階查詢與通知是否正常",
     },
   }[currentTab] || {
     title: "今日待辦",
@@ -97,17 +118,6 @@ export default function DashboardPage() {
         description: error instanceof Error ? error.message : "請確認橋接服務是否正常",
       });
     }
-  };
-
-  const handleNotificationChange = (key: keyof DashboardSummary["notifications"], value: boolean) => {
-    setSummary((prev) =>
-      prev
-        ? {
-            ...prev,
-            notifications: { ...prev.notifications, [key]: value },
-          }
-        : prev
-    );
   };
 
   return (
@@ -160,95 +170,63 @@ export default function DashboardPage() {
             </code>
           </div>
         )}
-        {summary && (
-        <Tabs
-          value={currentTab}
-          onValueChange={(value) => {
-            setCurrentTab(value);
-            const url = value === "boss" ? "/" : `/?tab=${value}`;
-            window.history.replaceState(null, "", url);
-          }}
-          className="space-y-6"
-        >
-          <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-flex">
-            <TabsTrigger value="boss" className="gap-2">
-              <LayoutDashboard className="size-4" />
-              <span className="hidden sm:inline">今日待辦</span>
-            </TabsTrigger>
-            <TabsTrigger value="alerts" className="gap-2">
-              <AlertCircle className="size-4" />
-              <span className="hidden sm:inline">告警紀錄</span>
-              {itPendingCount > 0 && (
-                <span className="ml-1 flex size-5 items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">
-                  {itPendingCount}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="endpoints" className="gap-2">
-              <Server className="size-4" />
-              <span className="hidden sm:inline">設備背景</span>
-            </TabsTrigger>
-            <TabsTrigger value="it" className="gap-2">
-              <Wrench className="size-4" />
-              <span className="hidden sm:inline">IT 詳細</span>
-            </TabsTrigger>
-            <TabsTrigger value="system" className="gap-2">
-              <Settings className="size-4" />
-              <span className="hidden sm:inline">系統</span>
-            </TabsTrigger>
-          </TabsList>
-
-          {/* 老闆視角 - 簡單明瞭 */}
-          <TabsContent value="boss" className="space-y-6">
+        {summary && currentTab === "boss" && (
+          <div className="space-y-6">
             <ExecutiveSummary
               data={summary.riskSummary}
-              alerts={summary.alerts}
+              alerts={visibleAlerts}
               endpointCount={summary.endpoints.length}
             />
             <div className="grid gap-6 lg:grid-cols-2">
               <ActionableAlerts
-                alerts={summary.alerts}
+                alerts={visibleAlerts}
                 onStatusChange={handleStatusChange}
               />
               <DeviceStatus endpoints={summary.endpoints} />
             </div>
-          </TabsContent>
+          </div>
+        )}
 
-          {/* 告警紀錄 - IT/顧問查全部事件 */}
-          <TabsContent value="alerts">
-            <AlertsTable alerts={summary.alerts} onStatusChange={handleStatusChange} />
-          </TabsContent>
-
-          {/* 設備狀態 */}
-          <TabsContent value="endpoints">
-            <DeviceStatus endpoints={summary.endpoints} />
-          </TabsContent>
-
-          {/* IT 詳細視角 - 保留技術細節 */}
-          <TabsContent value="it" className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-2">
-              <AlertTrendChart data={summary.alertTrends} />
-              <EndpointsMonitor endpoints={summary.endpoints} />
+        {summary && currentTab === "alerts" && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">告警紀錄篩選</div>
+                <div className="text-xs text-muted-foreground">
+                  端點篩選會同時套用在趨勢線與下方告警列表。
+                </div>
+              </div>
+              <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium">
+                <span className="text-muted-foreground">端點</span>
+                <select
+                  value={alertEndpointFilter}
+                  onChange={(event) => setAlertEndpointFilter(event.target.value)}
+                  className="max-w-56 bg-transparent text-sm font-medium outline-none"
+                  aria-label="告警端點篩選"
+                >
+                  <option value="all">全部端點</option>
+                  {alertEndpointOptions.map((endpoint) => (
+                    <option key={endpoint} value={endpoint}>
+                      {endpoint}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <AlertsTable alerts={summary.alerts} onStatusChange={handleStatusChange} />
-          </TabsContent>
-
-          {/* 系統設定 */}
-          <TabsContent value="system">
-            <SystemStatus
-              health={summary.systemHealth}
-              notifications={summary.notifications}
-              onNotificationChange={handleNotificationChange}
+            <AlertTrendChart data={summary.alertTrends} selectedEndpoint={alertEndpointFilter} />
+            <AlertsTable
+              alerts={filteredAlertRecords}
+              detectionCategories={summary.detectionCategories}
+              onStatusChange={handleStatusChange}
             />
-          </TabsContent>
-        </Tabs>
+          </div>
         )}
       </main>
 
       <NotificationPanel
         open={notificationPanelOpen}
         onOpenChange={setNotificationPanelOpen}
-        alerts={summary?.alerts || []}
+        alerts={visibleAlerts}
       />
     </div>
   );

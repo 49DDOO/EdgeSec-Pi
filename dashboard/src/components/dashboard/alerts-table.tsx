@@ -48,7 +48,19 @@ import {
 } from "@/components/ui/sheet";
 import { TechnicalAlertDetails } from "@/components/dashboard/technical-alert-details";
 import { sendInvestigationMessage } from "@/lib/api";
-import type { Alert, SeverityLevel, AlertStatus, InvestigationEvidence } from "@/lib/types";
+import {
+  categoryForAlert,
+  categoryLabel,
+  normalizedDetectionSettings,
+} from "@/lib/detection-categories";
+import type {
+  Alert,
+  SeverityLevel,
+  AlertStatus,
+  DetectionCategoryKey,
+  DetectionCategorySettings,
+  InvestigationEvidence,
+} from "@/lib/types";
 import { severityLabels, statusLabels } from "@/lib/labels";
 import { useInvestigationSessions } from "@/lib/use-investigation-sessions";
 import { toast } from "sonner";
@@ -56,6 +68,7 @@ import { toast } from "sonner";
 interface AlertsTableProps {
   alerts: Alert[];
   onStatusChange?: (alertId: string, newStatus: AlertStatus) => void;
+  detectionCategories?: DetectionCategorySettings;
 }
 
 interface AlertRecordGroup {
@@ -195,28 +208,45 @@ const evidenceSummary = (item: InvestigationEvidence) => {
   return "已查詢 Wazuh 資料";
 };
 
-export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
+export function AlertsTable({ alerts, onStatusChange, detectionCategories }: AlertsTableProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  const [selectedAlertId, setSelectedAlertId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("alert");
+  });
   const [filterSeverity, setFilterSeverity] = useState<SeverityLevel | "all">("all");
   const [filterStatus, setFilterStatus] = useState<AlertStatus | "all">("all");
-  const [filterEndpoint, setFilterEndpoint] = useState("all");
+  const [filterCategory, setFilterCategory] = useState<DetectionCategoryKey | "all">("all");
   const [investigatingAlert, setInvestigatingAlert] = useState<Alert | null>(null);
   const [investigationLoading, setInvestigationLoading] = useState(false);
   const { getSession, saveSession } = useInvestigationSessions();
-
-  const endpointOptions = useMemo(
-    () => Array.from(new Set(alerts.map((alert) => alert.agent_name).filter(Boolean))).sort(),
-    [alerts]
+  const selectedAlert = selectedAlertId ? alerts.find((alert) => alert.id === selectedAlertId) || null : null;
+  const categorySettings = useMemo(
+    () => normalizedDetectionSettings(detectionCategories),
+    [detectionCategories]
   );
+  const enabledCategoryKeys = categorySettings.categories
+    .filter((category) => categorySettings.enabled[category.key])
+    .map((category) => category.key);
 
-  const filteredAlerts = alerts.filter((alert) => {
+  const baseFilteredAlerts = alerts.filter((alert) => {
+    const category = categoryForAlert(alert);
+    if (!categorySettings.enabled[category]) return false;
     if (filterSeverity !== "all" && alert.severity !== filterSeverity) return false;
     if (filterStatus !== "all" && alert.status !== filterStatus) return false;
-    if (filterEndpoint !== "all" && alert.agent_name !== filterEndpoint) return false;
     return true;
   });
+  const filteredAlerts = baseFilteredAlerts.filter((alert) => (
+    filterCategory === "all" || categoryForAlert(alert) === filterCategory
+  ));
   const groupedAlerts = groupAlerts(filteredAlerts);
+  const categoryCounts = Object.fromEntries(
+    categorySettings.categories.map((category) => [category.key, 0])
+  ) as Record<DetectionCategoryKey, number>;
+  for (const alert of baseFilteredAlerts) {
+    const category = categoryForAlert(alert);
+    if (categorySettings.enabled[category]) categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+  }
 
   const handleStatusChange = (alertId: string, newStatus: AlertStatus) => {
     onStatusChange?.(alertId, newStatus);
@@ -224,7 +254,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
   };
 
   const openInvestigation = (alert: Alert) => {
-    setSelectedAlert(null);
+    setSelectedAlertId(null);
     setInvestigatingAlert(alert);
   };
 
@@ -285,23 +315,6 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <label className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-sm font-medium">
-                <Server className="size-4 text-muted-foreground" />
-                <span>端點：</span>
-                <select
-                  value={filterEndpoint}
-                  onChange={(event) => setFilterEndpoint(event.target.value)}
-                  className="max-w-48 bg-transparent text-sm font-medium outline-none"
-                  aria-label="端點篩選"
-                >
-                  <option value="all">全部</option>
-                  {endpointOptions.map((endpoint) => (
-                    <option key={endpoint} value={endpoint}>
-                      {endpoint}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <DropdownMenu>
                 <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
                   <Filter data-icon="inline-start" />
@@ -356,6 +369,36 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
           </div>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={filterCategory === "all" ? "default" : "outline"}
+              size="sm"
+              onClick={() => setFilterCategory("all")}
+            >
+              全部
+              <span className="ml-1 text-xs opacity-75">{baseFilteredAlerts.length}</span>
+            </Button>
+            {categorySettings.categories
+              .filter((category) => categorySettings.enabled[category.key])
+              .map((category) => (
+                <Button
+                  key={category.key}
+                  type="button"
+                  variant={filterCategory === category.key ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setFilterCategory(category.key)}
+                >
+                  {category.label_zh}
+                  <span className="ml-1 text-xs opacity-75">{categoryCounts[category.key] || 0}</span>
+                </Button>
+              ))}
+            {!enabledCategoryKeys.length && (
+              <p className="text-sm text-muted-foreground">
+                尚未啟用任何偵測類別，請至「偵測類別」設定開啟至少一項。
+              </p>
+            )}
+          </div>
           <ScrollArea className="h-[calc(100vh-22rem)] min-h-[520px]">
             <Table>
               <TableHeader>
@@ -375,7 +418,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                   <Fragment key={group.key}>
                     <TableRow
                       className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => setSelectedAlert(alert)}
+                      onClick={() => setSelectedAlertId(alert.id)}
                     >
                       <TableCell>
                         <Badge className={getSeverityBadgeClass(alert.severity)}>
@@ -386,7 +429,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                       <TableCell>
                         <div className="font-medium">{alert.summary || alert.rule_description}</div>
                         <div className="text-sm text-muted-foreground line-clamp-1">
-                          {alert.business_impact}
+                          {categoryLabel(categoryForAlert(alert), categorySettings.categories)} · {alert.business_impact}
                         </div>
                         {group.alerts.length > 1 && (
                           <div className="mt-1 text-xs text-muted-foreground">
@@ -465,7 +508,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                               }}
                             >
                               <Search data-icon="inline-start" />
-                              深入調查
+                              用 MCP 查證
                             </Button>
                             <Button
                               size="sm"
@@ -504,7 +547,18 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
         </CardContent>
       </Card>
 
-      <Dialog open={!!selectedAlert} onOpenChange={() => setSelectedAlert(null)}>
+      <Dialog
+        open={!!selectedAlert}
+        onOpenChange={(open) => {
+          if (open) return;
+          setSelectedAlertId(null);
+          const url = new URL(window.location.href);
+          if (url.searchParams.has("alert")) {
+            url.searchParams.delete("alert");
+            window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+          }
+        }}
+      >
         <DialogContent className="max-h-[88vh] w-[min(1120px,calc(100vw-3rem))] overflow-y-auto p-6 sm:max-w-[min(1120px,calc(100vw-3rem))]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 pr-8 text-lg">
@@ -587,7 +641,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                   onClick={() => openInvestigation(selectedAlert)}
                 >
                   <Search data-icon="inline-start" />
-                  深入調查
+                  用 MCP 查證
                 </Button>
                 <Button onClick={() => handleStatusChange(selectedAlert.id, "acknowledged")}>
                   <CheckCircle2 data-icon="inline-start" />
@@ -615,9 +669,9 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
       >
         <SheetContent className="w-[min(760px,calc(100vw-1rem))] gap-0 p-0 sm:max-w-none">
           <SheetHeader className="border-b pr-12">
-            <SheetTitle>深入調查</SheetTitle>
+            <SheetTitle>MCP 查證</SheetTitle>
             <SheetDescription>
-              留在告警紀錄流程內查 Wazuh 紀錄；這裡只查詢，不會封鎖、隔離或修改設定。
+              告警已先由 LLM 翻成白話；需要更多線索時，才從這裡讀取 Wazuh 紀錄。
             </SheetDescription>
           </SheetHeader>
 
@@ -625,10 +679,15 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="space-y-4 overflow-auto p-4">
                 <div className="rounded-lg border bg-muted/40 p-4">
-                  <div className="text-xs font-medium text-muted-foreground">正在調查的事件</div>
+                  <div className="text-xs font-medium text-muted-foreground">LLM 白話摘要</div>
                   <div className="mt-1 text-base font-semibold">
                     {investigatingAlert.summary || investigatingAlert.rule_description}
                   </div>
+                  {investigatingAlert.business_impact && (
+                    <div className="mt-2 text-sm leading-6 text-muted-foreground">
+                      {investigatingAlert.business_impact}
+                    </div>
+                  )}
                   <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                     <div>
                       <div className="text-xs text-muted-foreground">電腦</div>
@@ -653,7 +712,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                 </div>
 
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
-                  調查只會讀取 Wazuh 紀錄並整理摘要，不會執行封鎖、隔離、停用帳號或修改設定。
+                  MCP 是按需查證工具。點下方問題後才會讀取 Wazuh 紀錄；這裡不會封鎖、隔離、停用帳號或修改設定。
                 </div>
 
                 <div className="space-y-2">
@@ -677,7 +736,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
                 <div className="space-y-3">
                   {investigationSession.messages.length === 0 ? (
                     <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                      尚未開始調查。點上方問題後，系統會查 Wazuh 並把結果整理在這裡。
+                      尚未啟動 MCP 查證。上方白話摘要已可先判斷；需要更多線索時再點問題查 Wazuh。
                     </div>
                   ) : (
                     investigationSession.messages.map((message, index) => (
@@ -704,7 +763,7 @@ export function AlertsTable({ alerts, onStatusChange }: AlertsTableProps) {
 
                 {investigationSession.evidence.length > 0 && (
                   <details className="rounded-lg border p-3">
-                    <summary className="cursor-pointer text-sm font-medium">IT 查詢紀錄</summary>
+                    <summary className="cursor-pointer text-sm font-medium">MCP 查詢紀錄</summary>
                     <div className="mt-3 space-y-2">
                       {investigationSession.evidence.map((item, index) => (
                         <div key={`${item.tool}-${index}`} className="rounded-md border bg-muted/30 p-3 text-xs">

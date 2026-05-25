@@ -27,6 +27,7 @@ import httpx
 import admin_token
 import org_profile
 import owner_context
+import remote_action_tokens
 import slack_actions
 
 log = logging.getLogger("wazuh-bridge")
@@ -377,6 +378,11 @@ def _action_ip_candidates(alert: dict[str, Any], parsed: Optional[dict[str, Any]
     return candidates
 
 
+def _has_valid_wazuh_agent_id(agent_id: Any) -> bool:
+    text = str(agent_id or "").strip()
+    return text.isdigit() and 3 <= len(text) <= 5
+
+
 def _emergency_help_block(has_ip: bool) -> dict[str, Any]:
     ip_text = (
         "*封鎖來源 IP*：擋住外部來源，不是關掉公司電腦。\n"
@@ -405,10 +411,17 @@ def _augment_with_action_buttons(payload: dict[str, Any],
     agent_name = (alert.get("agent") or {}).get("name", "")
     agent_id   = (alert.get("agent") or {}).get("id", "?")
     action_ips = _action_ip_candidates(alert, parsed)
+    can_run_emergency_actions = (
+        slack_actions.is_enabled()
+        and not _is_sample_alert(alert)
+        and _has_valid_wazuh_agent_id(agent_id)
+    )
+    can_isolate_endpoint = can_run_emergency_actions and slack_actions.endpoint_isolation_enabled()
 
     # Emergency action buttons (bot mode only).
-    # Skip if agent_id is unknown — Wazuh rejects agents_list=? with 400.
-    if slack_actions.is_enabled() and agent_id and agent_id != "?":
+    # Skip sample data and non-Wazuh ids — Wazuh Active Response expects a
+    # numeric 3-5 digit agent id, and test cards should never expose live actions.
+    if can_run_emergency_actions:
         if action_ips:
             ip = action_ips[0]
             elements.append({
@@ -416,7 +429,7 @@ def _augment_with_action_buttons(payload: dict[str, Any],
                 "action_id": "block_ip",
                 "style":     "danger",
                 "text":      {"type": "plain_text", "text": "封鎖來源 IP"},
-                "value":     f"{agent_id}|{ip}",
+                "value":     remote_action_tokens.issue("block_ip", agent_id, target=ip),
                 "confirm": {
                     "title":   {"type": "plain_text", "text": "確認封鎖來源 IP？"},
                     "text":    {"type": "mrkdwn",
@@ -432,7 +445,7 @@ def _augment_with_action_buttons(payload: dict[str, Any],
                 "type": "button",
                 "action_id": "unblock_ip",
                 "text": {"type": "plain_text", "text": "解除封鎖"},
-                "value": f"{agent_id}|{ip}",
+                "value": remote_action_tokens.issue("unblock_ip", agent_id, target=ip),
                 "confirm": {
                     "title": {"type": "plain_text", "text": "確認解除封鎖？"},
                     "text": {"type": "mrkdwn",
@@ -444,27 +457,28 @@ def _augment_with_action_buttons(payload: dict[str, Any],
                     "deny": {"type": "plain_text", "text": "取消"},
                 },
             })
-        elements.append({
-            "type": "button",
-            "action_id": "isolate_endpoint",
-            "style": "danger",
-            "text": {"type": "plain_text", "text": "隔離端點"},
-            "value": f"{agent_id}|{agent_name}",
-            "confirm": {
-                "title": {"type": "plain_text", "text": "確認隔離這台電腦？"},
-                "text": {"type": "mrkdwn",
-                         "text": (
-                             f"這會嘗試暫停 *{agent_name or '這台電腦'}* 的網路連線，"
-                             "避免疑似中毒或外洩擴大。\n"
-                             "風險：使用者可能立刻不能工作；若是重要服務，可能影響營運。"
-                         )},
-                "confirm": {"type": "plain_text", "text": "隔離端點"},
-                "deny": {"type": "plain_text", "text": "取消"},
-            },
-        })
+        if can_isolate_endpoint:
+            elements.append({
+                "type": "button",
+                "action_id": "isolate_endpoint",
+                "style": "danger",
+                "text": {"type": "plain_text", "text": "隔離端點"},
+                "value": remote_action_tokens.issue("isolate_endpoint", agent_id, target=agent_name),
+                "confirm": {
+                    "title": {"type": "plain_text", "text": "確認隔離這台電腦？"},
+                    "text": {"type": "mrkdwn",
+                             "text": (
+                                 f"這會嘗試暫停 *{agent_name or '這台電腦'}* 的網路連線，"
+                                 "避免疑似中毒或外洩擴大。\n"
+                                 "風險：使用者可能立刻不能工作；若是重要服務，可能影響營運。"
+                             )},
+                    "confirm": {"type": "plain_text", "text": "隔離端點"},
+                    "deny": {"type": "plain_text", "text": "取消"},
+                },
+            })
 
     # Configure-agent button (new, works in webhook mode too).
-    cfg_btn = _build_configure_agent_button(agent_name)
+    cfg_btn = None if _is_sample_alert(alert) else _build_configure_agent_button(agent_name)
     if cfg_btn:
         elements.append(cfg_btn)
 
@@ -474,7 +488,7 @@ def _augment_with_action_buttons(payload: dict[str, Any],
     # Inject into the existing attachment (so color stripe stays).
     att = payload["attachments"][0]
     blocks = att.get("blocks", [])
-    if slack_actions.is_enabled() and agent_id and agent_id != "?":
+    if can_run_emergency_actions:
         blocks.append(_emergency_help_block(bool(action_ips)))
     att["blocks"] = blocks + [{"type": "actions", "elements": elements}]
     return payload

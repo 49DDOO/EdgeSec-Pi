@@ -68,11 +68,11 @@ export function DeviceStatus({ endpoints }: DeviceStatusProps) {
         </div>
 
         {/* 設備列表 - 簡化版 */}
-        <div className="space-y-2">
+        <div className="divide-y divide-border">
           {endpoints.map((endpoint) => (
             <div
               key={endpoint.id}
-              className="flex items-center justify-between rounded-lg border p-3"
+              className="flex items-center justify-between py-3"
             >
               <div className="flex items-center gap-3">
                 {getStatusIcon(endpoint.status)}

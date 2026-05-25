@@ -24,6 +24,7 @@ wazuh-llm-bridge/data/
 # Logs and generated diagnostics
 logs/
 scripts/logs/
+test_sys/logs/
 scripts/certs/
 wazuh-stack/logs/
 wazuh-stack/setup.log

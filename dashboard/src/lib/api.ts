@@ -2,6 +2,10 @@ import type {
   Alert,
   AlertStatus,
   AlertTrend,
+  AiModelListResult,
+  AiSettings,
+  AiSettingsTestResult,
+  DetectionCategorySettings,
   Endpoint,
   EndpointBusinessContext,
   InvestigationChatResponse,
@@ -19,6 +23,7 @@ export interface DashboardSummary {
   endpoints: Endpoint[];
   systemHealth: SystemHealth;
   notifications: NotificationConfig;
+  detectionCategories: DetectionCategorySettings;
   install?: {
     manager_host?: string;
     bridge_public_url?: string;
@@ -118,6 +123,92 @@ export async function fetchNotificationSettings(): Promise<NotificationSettingsR
     throw new Error(`讀取通知設定失敗：${await readError(response)}`);
   }
   return (await response.json()) as NotificationSettingsResponse;
+}
+
+export async function fetchDetectionCategorySettings(): Promise<DetectionCategorySettings> {
+  const response = await fetch(apiUrl("/api/dashboard/detection-categories"), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`讀取偵測類別設定失敗：${await readError(response)}`);
+  }
+  return (await response.json()) as DetectionCategorySettings;
+}
+
+export async function saveDetectionCategorySettings(
+  enabled: DetectionCategorySettings["enabled"]
+): Promise<DetectionCategorySettings> {
+  const response = await fetch(apiUrl("/api/dashboard/detection-categories"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as DetectionCategorySettings;
+}
+
+export async function fetchAiSettings(): Promise<AiSettings> {
+  const response = await fetch(apiUrl("/api/dashboard/ai-settings"), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`讀取 AI 模型設定失敗：${await readError(response)}`);
+  }
+  return (await response.json()) as AiSettings;
+}
+
+export async function saveAiSettings(
+  values: Partial<AiSettings> & { api_key?: string; clear_api_key?: boolean }
+): Promise<AiSettings> {
+  const response = await fetch(apiUrl("/api/dashboard/ai-settings"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(values),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as AiSettings;
+}
+
+export async function useAiProvider(provider: AiSettings["provider"]): Promise<AiSettings> {
+  const response = await fetch(apiUrl("/api/dashboard/ai-settings/use"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as AiSettings;
+}
+
+export async function testAiSettings(): Promise<AiSettingsTestResult> {
+  const response = await fetch(apiUrl("/api/dashboard/ai-settings/test"), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as AiSettingsTestResult;
+}
+
+export async function fetchAiModels(values: {
+  provider: AiSettings["provider"];
+  base_url: string;
+  api_key?: string;
+}): Promise<AiModelListResult> {
+  const response = await fetch(apiUrl("/api/dashboard/ai-settings/models"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(values),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as AiModelListResult;
 }
 
 export async function saveNotificationSettings(

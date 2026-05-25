@@ -17,9 +17,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ -f "$ROOT/bridge.env" ]]; then
-  set -a; source "$ROOT/bridge.env"; set +a
-fi
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib/load-config.sh"
 
 need_pytest() {
   python3 - <<'PY' >/dev/null 2>&1 || {
@@ -103,22 +102,12 @@ else:
 check_env() {
   local failures=0
 
-  BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-  BRIDGE_PUBLIC_URL="${BRIDGE_PUBLIC_URL:-http://localhost:$BRIDGE_PORT}"
-  BRIDGE_LOCAL_URL="http://localhost:$BRIDGE_PORT"
-  if [[ "$BRIDGE_PUBLIC_URL" == https://* || -n "${BRIDGE_SSL_CERTFILE:-}" || -n "${BRIDGE_SSL_KEYFILE:-}" ]]; then
-    BRIDGE_LOCAL_URL="https://localhost:$BRIDGE_PORT"
-  fi
-  LM_STUDIO_URL="${LM_STUDIO_URL:-http://localhost:1234/v1/chat/completions}"
-  LM_MODEL="${LM_MODEL:-local-model}"
-  WAZUH_API_URL="${WAZUH_API_URL:-https://localhost:55000}"
-  MCP_SERVER_URL="${MCP_SERVER_URL:-}"
-  DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
+  BRIDGE_LOCAL_URL="$BRIDGE_LOCAL_BASE"
 
   echo "EdgeSec-Pi local environment readiness"
   echo
 
-  if [[ -f "$ROOT/bridge.env" ]]; then
+  if [[ -f "$EDGESEC_BRIDGE_ENV" ]]; then
     ok "bridge.env loaded"
   else
     warn "bridge.env missing; using built-in defaults"

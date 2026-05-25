@@ -25,12 +25,14 @@ import time
 from typing import Any, Optional
 
 import wazuh
+import remote_action_tokens
 
 log = logging.getLogger("slack-actions")
 
 SLACK_BOT_TOKEN  = os.getenv("SLACK_BOT_TOKEN", "").strip() or None
 SLACK_APP_TOKEN  = os.getenv("SLACK_APP_TOKEN", "").strip() or None
 SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "").strip() or None
+WAZUH_ISOLATE_COMMAND = os.getenv("WAZUH_ISOLATE_COMMAND", "").strip()
 
 _app = None
 _handler_task: Optional[asyncio.Task] = None
@@ -38,6 +40,10 @@ _handler_task: Optional[asyncio.Task] = None
 
 def is_enabled() -> bool:
     return bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN and SLACK_CHANNEL_ID)
+
+
+def endpoint_isolation_enabled() -> bool:
+    return bool(WAZUH_ISOLATE_COMMAND)
 
 
 # IPv4 detection — only show "block IP" button for IOCs that look like
@@ -80,7 +86,7 @@ def _unblock_button(agent_id: str, ip: str) -> dict:
         "type": "button",
         "action_id": "unblock_ip",
         "text": {"type": "plain_text", "text": "解除封鎖"},
-        "value": f"{agent_id}|{ip}",
+        "value": remote_action_tokens.issue("unblock_ip", agent_id, target=ip),
         "confirm": {
             "title":   {"type": "plain_text", "text": "確認解除封鎖？"},
             "text":    {"type": "mrkdwn",
@@ -101,7 +107,7 @@ def _isolate_button(agent_id: str, agent_name: str) -> dict:
         "action_id": "isolate_endpoint",
         "style": "danger",
         "text": {"type": "plain_text", "text": "隔離端點"},
-        "value": f"{agent_id}|{agent_name}",
+        "value": remote_action_tokens.issue("isolate_endpoint", agent_id, target=agent_name),
         "confirm": {
             "title": {"type": "plain_text", "text": "確認隔離這台電腦？"},
             "text": {
@@ -116,6 +122,21 @@ def _isolate_button(agent_id: str, agent_name: str) -> dict:
             "deny": {"type": "plain_text", "text": "取消"},
         },
     }
+
+
+def _friendly_isolation_error(agent_name: str, error: Exception) -> str:
+    raw = str(error)
+    target = agent_name or "這台電腦"
+    if "endpoint isolation is not enabled" in raw or "WAZUH_ISOLATE_COMMAND" in raw:
+        return (
+            f"⚠️ *尚未啟用端點隔離*\n"
+            f"`{target}` 目前沒有安裝並設定端點隔離腳本，所以系統沒有真的隔離這台電腦。\n"
+            "請 IT 先手動處理；若要啟用這個按鈕，請先完成隔離腳本部署並設定 `WAZUH_ISOLATE_COMMAND`。"
+        )
+    return (
+        f"❌ *隔離 `{target}` 未完成*\n"
+        f"請 IT 手動處理，並查看 bridge log 確認原因。錯誤摘要：{raw}"
+    )
 
 
 def _rewrite_with_audit(attachments: list[dict],
@@ -147,10 +168,14 @@ def _register_handlers(app) -> None:
         clicker = body.get("user", {}).get("username") or body.get("user", {}).get("id", "?")
         value = action.get("value", "")
         try:
-            agent_id, ip = value.split("|", 1)
-        except ValueError:
+            claims = remote_action_tokens.consume(value, "block_ip", clicker=clicker)
+            agent_id = str(claims["agent_id"])
+            ip = str(claims.get("target") or "")
+            if not ip:
+                raise remote_action_tokens.ActionTokenError("處置 token 缺少來源 IP，已拒絕執行。")
+        except remote_action_tokens.ActionTokenError as e:
             await respond(replace_original=False,
-                          text=f"❌ button payload corrupted: `{value}`")
+                          text=f"⚠️ {e}")
             return
 
         log.warning("user=%s clicked block_ip agent=%s ip=%s", clicker, agent_id, ip)
@@ -183,10 +208,14 @@ def _register_handlers(app) -> None:
         clicker = body.get("user", {}).get("username") or body.get("user", {}).get("id", "?")
         value = action.get("value", "")
         try:
-            agent_id, ip = value.split("|", 1)
-        except ValueError:
+            claims = remote_action_tokens.consume(value, "unblock_ip", clicker=clicker)
+            agent_id = str(claims["agent_id"])
+            ip = str(claims.get("target") or "")
+            if not ip:
+                raise remote_action_tokens.ActionTokenError("處置 token 缺少來源 IP，已拒絕執行。")
+        except remote_action_tokens.ActionTokenError as e:
             await respond(replace_original=False,
-                          text=f"❌ button payload corrupted: `{value}`")
+                          text=f"⚠️ {e}")
             return
 
         log.warning("user=%s clicked unblock_ip agent=%s ip=%s", clicker, agent_id, ip)
@@ -217,10 +246,12 @@ def _register_handlers(app) -> None:
         clicker = body.get("user", {}).get("username") or body.get("user", {}).get("id", "?")
         value = action.get("value", "")
         try:
-            agent_id, agent_name = value.split("|", 1)
-        except ValueError:
+            claims = remote_action_tokens.consume(value, "isolate_endpoint", clicker=clicker)
+            agent_id = str(claims["agent_id"])
+            agent_name = str(claims.get("target") or "")
+        except remote_action_tokens.ActionTokenError as e:
             await respond(replace_original=False,
-                          text=f"❌ button payload corrupted: `{value}`")
+                          text=f"⚠️ {e}")
             return
 
         log.warning("user=%s clicked isolate_endpoint agent=%s", clicker, agent_id)
@@ -233,13 +264,18 @@ def _register_handlers(app) -> None:
                 raise RuntimeError(result.get("error", "unknown"))
         except Exception as e:
             log.exception("isolate_endpoint failed")
-            await respond(
-                replace_original=False,
-                text=(
-                    f"❌ 隔離 `{agent_name or agent_id}` 未完成：{e}\n"
-                    "請改由 IT 手動處理，或先完成端點隔離腳本設定。"
+            attachments = body.get("message", {}).get("attachments") or []
+            rewritten = _rewrite_with_audit(
+                attachments,
+                confirm_line=(
+                    f"⚠️ *端點隔離未執行* `{agent_name or agent_id}` "
+                    f"(by *{clicker}* · {time.strftime('%H:%M:%S')} · 尚未完成隔離腳本設定)"
                 ),
+                new_action_button=None,
             )
+            await respond(replace_original=True,
+                          text=_friendly_isolation_error(agent_name or agent_id, e),
+                          attachments=rewritten)
             return
 
         attachments = body.get("message", {}).get("attachments") or []

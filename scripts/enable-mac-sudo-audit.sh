@@ -17,12 +17,8 @@ set -euo pipefail
 
 # ── Load unified config (bridge.env) ──────────────
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_BRIDGE_ENV="$_SCRIPT_DIR/../bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-
+# shellcheck disable=SC1091
+source "$_SCRIPT_DIR/lib/load-config.sh"
 
 OSSEC_CONF="/Library/Ossec/etc/ossec.conf"
 SUDO_LOG="/var/log/sudo.log"

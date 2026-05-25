@@ -25,41 +25,18 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOGS="$DIR/logs"
 mkdir -p "$LOGS"
 
-# ── Project root (one level up from scripts/) ────────────────────────
-ROOT="$DIR/.."
-WAZUH_STACK="$ROOT/wazuh-stack"
-DASHBOARD_DIR="$ROOT/dashboard"
-
 # ── Load unified config (bridge.env) from project root ──────────────
-_BRIDGE_ENV="$ROOT/bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
+# shellcheck disable=SC1091
+source "$DIR/lib/load-config.sh"
 
-BRIDGE_DIR="$ROOT/wazuh-llm-bridge"
-_BRIDGE_DOTENV="$BRIDGE_DIR/.env"
-if [[ -f "$_BRIDGE_DOTENV" ]]; then
-  set -a; source "$_BRIDGE_DOTENV"; set +a
-fi
+ROOT="$EDGESEC_ROOT"
+WAZUH_STACK="$EDGESEC_WAZUH_STACK_DIR"
+DASHBOARD_DIR="$EDGESEC_DASHBOARD_DIR"
+BRIDGE_DIR="$EDGESEC_BRIDGE_DIR"
 
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-BRIDGE_BIND_HOST="${BRIDGE_BIND_HOST:-127.0.0.1}"
-DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
-DASHBOARD_BIND_HOST="${DASHBOARD_BIND_HOST:-127.0.0.1}"
-DASHBOARD_V2_URL="${DASHBOARD_V2_URL:-http://127.0.0.1:$DASHBOARD_PORT}"
-LM_STUDIO_URL="${LM_STUDIO_URL:-http://localhost:1234/v1/chat/completions}"
-LM_MODEL="${LM_MODEL:-gemma-4-31b-it-mlx}"
-LM_TIMEOUT_S="${LM_TIMEOUT_S:-180}"
-LM_STUDIO_MODELS_URL="${LM_STUDIO_MODELS_URL:-${LM_STUDIO_URL%/chat/completions}/models}"
-BRIDGE_SCHEME="http"
-BRIDGE_SSL_ARGS=()
-if [[ -n "${BRIDGE_SSL_CERTFILE:-}" || -n "${BRIDGE_SSL_KEYFILE:-}" ]]; then
-  if [[ -z "${BRIDGE_SSL_CERTFILE:-}" || -z "${BRIDGE_SSL_KEYFILE:-}" ]]; then
-    printf "\033[1;31m[x]\033[0m set both BRIDGE_SSL_CERTFILE and BRIDGE_SSL_KEYFILE, or neither\n"
-    exit 1
-  fi
-  BRIDGE_SCHEME="https"
-  BRIDGE_SSL_ARGS=(--ssl-certfile "$BRIDGE_SSL_CERTFILE" --ssl-keyfile "$BRIDGE_SSL_KEYFILE")
+if [[ "$BRIDGE_SCHEME" == "https" && ( -z "${BRIDGE_SSL_CERTFILE:-}" || -z "${BRIDGE_SSL_KEYFILE:-}" ) ]]; then
+  printf "\033[1;31m[x]\033[0m set both BRIDGE_SSL_CERTFILE and BRIDGE_SSL_KEYFILE, or neither\n"
+  exit 1
 fi
 
 c_log() { printf "\033[1;36m[%s]\033[0m %s\n" "$(date '+%H:%M:%S')" "$*"; }
@@ -165,7 +142,7 @@ cmd_serve_dashboard() {
     node_tls_reject="${node_tls_reject:-0}"
   fi
   DASHBOARD_PORT="$DASHBOARD_PORT" \
-  BRIDGE_API_BASE="$BRIDGE_SCHEME://127.0.0.1:$BRIDGE_PORT" \
+  BRIDGE_API_BASE="$BRIDGE_LOCAL_BASE" \
   NEXT_PUBLIC_BRIDGE_API_BASE="" \
   NODE_EXTRA_CA_CERTS="$node_extra_ca" \
   NODE_OPTIONS="$node_options" \
@@ -464,6 +441,7 @@ cmd_down() {
 case "${1:-default}" in
   _serve_bridge) cmd_serve_bridge ;;
   _serve_dashboard) cmd_serve_dashboard ;;
+  config) edgesec_print_config ;;
   check)  cmd_check ;;
   setup)  cmd_setup ;;
   bridge) cmd_bridge ;;
@@ -479,7 +457,8 @@ case "${1:-default}" in
   default|all)
           cmd_check && cmd_setup && cmd_start && cmd_smoke ;;
   *)      cat <<EOF
-usage: $0 {check|setup|bridge|dashboard|start|stop|restart|status|smoke|diag|up|down|all}
+usage: $0 {config|check|setup|bridge|dashboard|start|stop|restart|status|smoke|diag|up|down|all}
+  config  print unified port and service URL config
   check   prereq audit (Docker, LM Studio, port, bridge source)
   setup   bring up Wazuh stack only
   bridge  start bridge in background → logs/bridge.log

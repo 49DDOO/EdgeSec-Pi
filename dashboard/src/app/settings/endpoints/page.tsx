@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -381,7 +381,28 @@ function installCommand(os: OsKind, managerHost: string) {
   return `curl -so wazuh-agent-4.14.5.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.14.5-1_amd64.deb\nsudo WAZUH_MANAGER='${host}' dpkg -i ./wazuh-agent-4.14.5.deb\nsudo systemctl enable --now wazuh-agent`;
 }
 
+function subscribeToLocationChange(onStoreChange: () => void) {
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
+}
+
+function getEndpointSection() {
+  return new URLSearchParams(window.location.search).get("section") === "install"
+    ? "install"
+    : "inventory";
+}
+
+function getServerEndpointSection() {
+  return "inventory";
+}
+
 export default function EndpointsPage() {
+  const section = useSyncExternalStore(
+    subscribeToLocationChange,
+    getEndpointSection,
+    getServerEndpointSection
+  );
+  const isInstallView = section === "install";
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
@@ -515,12 +536,20 @@ export default function EndpointsPage() {
       <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-            <Monitor className="size-5 text-primary" />
+            {isInstallView ? (
+              <Download className="size-5 text-primary" />
+            ) : (
+              <Monitor className="size-5 text-primary" />
+            )}
           </div>
           <div>
-            <h1 className="text-xl font-semibold">電腦端點</h1>
+            <h1 className="text-xl font-semibold">
+              {isInstallView ? "電腦安裝" : "電腦背景"}
+            </h1>
             <p className="text-sm text-muted-foreground">
-              查看受監控電腦，補齊業務用途，下載 Agent 安裝方式
+              {isInstallView
+                ? "下載與複製 Wazuh Agent 安裝方式"
+                : "查看受監控電腦，補齊業務用途與安全設定"}
             </p>
           </div>
         </div>
@@ -535,45 +564,48 @@ export default function EndpointsPage() {
 
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          <div className="grid gap-4 sm:grid-cols-4">
-            <Card>
-              <CardContent className="flex items-center gap-4 p-4">
-                <Monitor className="size-8 text-muted-foreground" />
-                <div>
-                  <p className="text-2xl font-bold">{stats.total}</p>
-                  <p className="text-sm text-muted-foreground">端點總數</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="flex items-center gap-4 p-4">
-                <CheckCircle2 className="size-8 text-emerald-600" />
-                <div>
-                  <p className="text-2xl font-bold">{stats.online}</p>
-                  <p className="text-sm text-muted-foreground">在線</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="flex items-center gap-4 p-4">
-                <XCircle className="size-8 text-destructive" />
-                <div>
-                  <p className="text-2xl font-bold">{stats.offline}</p>
-                  <p className="text-sm text-muted-foreground">離線</p>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="flex items-center gap-4 p-4">
-                <Wrench className="size-8 text-amber-600" />
-                <div>
-                  <p className="text-2xl font-bold">{stats.missingContext}</p>
-                  <p className="text-sm text-muted-foreground">待補業務背景</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          {!isInstallView && (
+            <div className="grid gap-4 sm:grid-cols-4">
+              <Card>
+                <CardContent className="flex items-center gap-4 p-4">
+                  <Monitor className="size-8 text-muted-foreground" />
+                  <div>
+                    <p className="text-2xl font-bold">{stats.total}</p>
+                    <p className="text-sm text-muted-foreground">端點總數</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="flex items-center gap-4 p-4">
+                  <CheckCircle2 className="size-8 text-emerald-600" />
+                  <div>
+                    <p className="text-2xl font-bold">{stats.online}</p>
+                    <p className="text-sm text-muted-foreground">在線</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="flex items-center gap-4 p-4">
+                  <XCircle className="size-8 text-destructive" />
+                  <div>
+                    <p className="text-2xl font-bold">{stats.offline}</p>
+                    <p className="text-sm text-muted-foreground">離線</p>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="flex items-center gap-4 p-4">
+                  <Wrench className="size-8 text-amber-600" />
+                  <div>
+                    <p className="text-2xl font-bold">{stats.missingContext}</p>
+                    <p className="text-sm text-muted-foreground">待補業務背景</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
+          {isInstallView && (
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -622,7 +654,9 @@ export default function EndpointsPage() {
               </div>
             </CardContent>
           </Card>
+          )}
 
+          {!isInstallView && (
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -710,7 +744,9 @@ export default function EndpointsPage() {
               )}
             </CardContent>
           </Card>
+          )}
 
+          {isInstallView && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -722,6 +758,7 @@ export default function EndpointsPage() {
               </CardDescription>
             </CardHeader>
           </Card>
+          )}
         </div>
       </main>
 

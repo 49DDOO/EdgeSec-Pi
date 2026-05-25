@@ -51,7 +51,16 @@ def test_sca_evidence_uses_wazuh_remediation():
                 "check": {
                     "title": "Ensure gpgcheck is globally activated.",
                     "result": "failed",
+                    "description": "Ensure packages are verified before install.",
                     "rationale": "Packages should be verified before install.",
+                    "condition": "all",
+                    "checks": [
+                        "c:grep ^gpgcheck /etc/yum.conf -> r:^gpgcheck=1$",
+                    ],
+                    "compliance": {
+                        "cis": ["1.2.3"],
+                        "pci_dss_v3.2.1": ["6.2"],
+                    },
                     "remediation": "Set gpgcheck=1 in /etc/yum.conf.",
                 }
             }
@@ -61,6 +70,11 @@ def test_sca_evidence_uses_wazuh_remediation():
 
     assert item["module"] == "sca"
     assert item["module_context"]["check_title"] == "Ensure gpgcheck is globally activated."
+    assert item["module_context"]["description"] == "Ensure packages are verified before install."
+    assert item["module_context"]["checks_condition"] == "all"
+    assert "grep ^gpgcheck /etc/yum.conf" in item["module_context"]["checks"]
+    assert "cis: 1.2.3" in item["module_context"]["compliance"]
+    assert "pci_dss_v3.2.1: 6.2" in item["module_context"]["compliance"]
     assert item["module_context"]["remediation"] == "Set gpgcheck=1 in /etc/yum.conf."
     assert item["remediation"]["wazuh"] == "Set gpgcheck=1 in /etc/yum.conf."
 

@@ -149,6 +149,53 @@ export interface SystemHealth {
   llm_service: "healthy" | "degraded" | "down";
 }
 
+export type AiProviderKey = "lm_studio" | "ollama" | "openai" | "openai_compatible";
+
+export interface AiProviderOption {
+  key: AiProviderKey;
+  label_zh: string;
+  default_base_url: string;
+  default_model: string;
+  help_zh: string;
+  base_url: string;
+  chat_completions_url: string;
+  model: string;
+  timeout_s: number;
+  max_concurrent_requests: number;
+  api_key_configured: boolean;
+  api_key_preview: string;
+  is_active: boolean;
+}
+
+export interface AiSettings {
+  enabled: boolean;
+  provider: AiProviderKey;
+  active_provider: AiProviderKey;
+  base_url: string;
+  chat_completions_url: string;
+  model: string;
+  timeout_s: number;
+  max_concurrent_requests: number;
+  api_key_configured: boolean;
+  api_key_preview: string;
+  providers: AiProviderOption[];
+  message?: string;
+}
+
+export interface AiSettingsTestResult {
+  ok: boolean;
+  provider: AiProviderKey | string;
+  model: string;
+  base_url: string;
+  reply_preview: string;
+  message?: string;
+}
+
+export interface AiModelListResult {
+  models: string[];
+  message?: string;
+}
+
 export type ServiceCheckStatus = "ok" | "warn" | "fail" | "skip";
 
 export interface ServiceCheck {
@@ -192,6 +239,7 @@ export interface AlertTrend {
   high: number;
   medium: number;
   low: number;
+  endpoints?: Record<string, number>;
 }
 
 export interface InvestigationMessage {
@@ -208,4 +256,28 @@ export interface InvestigationEvidence {
 export interface InvestigationChatResponse {
   answer_zh: string;
   evidence: InvestigationEvidence[];
+}
+
+export type DetectionCategoryKey =
+  | "authentication"
+  | "sca"
+  | "vulnerability"
+  | "fim"
+  | "network"
+  | "process"
+  | "malware"
+  | "system"
+  | "compliance"
+  | "other";
+
+export interface DetectionCategory {
+  key: DetectionCategoryKey;
+  label_zh: string;
+  description_zh: string;
+}
+
+export interface DetectionCategorySettings {
+  categories: DetectionCategory[];
+  enabled: Record<DetectionCategoryKey, boolean>;
+  message?: string;
 }

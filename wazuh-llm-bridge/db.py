@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     agent_ip         TEXT,
     full_log         TEXT,
     -- Gemma's structured verdict (NULL if LLM call failed):
-    llm_status       TEXT    NOT NULL DEFAULT 'pending', -- 'ok' | 'error'
+    llm_status       TEXT    NOT NULL DEFAULT 'pending', -- 'ok' | 'error' | 'skipped'
     llm_severity     TEXT,                                -- critical|high|medium|low|info
     llm_root_cause   TEXT,
     llm_action       TEXT,
@@ -101,7 +101,8 @@ def _save_alert_sync(alert: dict[str, Any],
                      llm_reply: str,
                      parsed: dict[str, Any] | None,
                      latency_ms: int,
-                     error: str | None) -> int:
+                     error: str | None,
+                     llm_status: str | None = None) -> int:
     rule  = alert.get("rule")  or {}
     agent = alert.get("agent") or {}
     meta  = alert.get("_edgesec") or {}
@@ -129,7 +130,7 @@ def _save_alert_sync(alert: dict[str, Any],
                 agent.get("name"),
                 agent.get("ip"),
                 alert.get("full_log"),
-                "error" if error else "ok",
+                llm_status or ("error" if error else "ok"),
                 (p.get("severity") or "").lower() or None,
                 p.get("root_cause"),
                 p.get("action"),
@@ -388,6 +389,61 @@ def _compute_stats_sync() -> dict[str, Any]:
     }
 
 
+def _alert_trends_sync(days: int = 7, include_sampledata: bool = False) -> list[dict[str, Any]]:
+    day_count = max(1, min(int(days or 7), 30))
+    now = time.time()
+    start = now - ((day_count - 1) * 86400)
+    labels = [
+        time.strftime("%m/%d", time.localtime(start + (index * 86400)))
+        for index in range(day_count)
+    ]
+    trends = {
+        label: {"date": label, "critical": 0, "high": 0, "medium": 0, "low": 0, "endpoints": {}}
+        for label in labels
+    }
+    where = ["received_at >= ?"]
+    args: list[Any] = [start]
+    if not include_sampledata:
+        where.append(_NOT_SAMPLEDATA_SQL)
+    where_sql = " AND ".join(where)
+
+    with _connect() as conn:
+        cur = conn.execute(
+            f"""
+            SELECT strftime('%m/%d', received_at, 'unixepoch', 'localtime') AS day,
+                   COALESCE(llm_severity, 'unclassified') AS severity,
+                   COUNT(*) AS count
+              FROM alerts
+             WHERE {where_sql}
+             GROUP BY day, severity
+            """,
+            args,
+        )
+        for row in cur.fetchall():
+            day = row["day"]
+            severity = row["severity"]
+            if day in trends and severity in ("critical", "high", "medium", "low"):
+                trends[day][severity] = int(row["count"] or 0)
+
+        cur = conn.execute(
+            f"""
+            SELECT strftime('%m/%d', received_at, 'unixepoch', 'localtime') AS day,
+                   COALESCE(NULLIF(agent_name, ''), '未知設備') AS endpoint,
+                   COUNT(*) AS count
+              FROM alerts
+             WHERE {where_sql}
+             GROUP BY day, endpoint
+            """,
+            args,
+        )
+        for row in cur.fetchall():
+            day = row["day"]
+            if day in trends:
+                trends[day]["endpoints"][row["endpoint"]] = int(row["count"] or 0)
+
+    return [trends[label] for label in labels]
+
+
 # ─── async wrappers ─────────────────────────────────────────────────────
 async def init_db() -> None:
     await asyncio.to_thread(init_db_sync)
@@ -397,9 +453,10 @@ async def save_alert(alert: dict[str, Any],
                      llm_reply: str,
                      parsed: dict[str, Any] | None,
                      latency_ms: int,
-                     error: str | None) -> int:
+                     error: str | None,
+                     llm_status: str | None = None) -> int:
     return await asyncio.to_thread(
-        _save_alert_sync, alert, llm_reply, parsed, latency_ms, error
+        _save_alert_sync, alert, llm_reply, parsed, latency_ms, error, llm_status
     )
 
 
@@ -416,6 +473,10 @@ async def list_alerts(limit: int = 50,
 
 async def compute_stats() -> dict[str, Any]:
     return await asyncio.to_thread(_compute_stats_sync)
+
+
+async def alert_trends(days: int = 7, include_sampledata: bool = False) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(_alert_trends_sync, days, include_sampledata)
 
 
 async def update_alert_case(alert_id: int,

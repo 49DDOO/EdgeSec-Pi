@@ -7,13 +7,13 @@ import {
   CheckCircle2,
   XCircle,
   Wrench,
-  ChevronDown,
   Search,
   Loader2,
+  ExternalLink,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
@@ -23,11 +23,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { TechnicalAlertDetails } from "@/components/dashboard/technical-alert-details";
 import { isBossActionAlert, itFollowupAlerts } from "@/lib/alert-routing";
 import { sendInvestigationMessage } from "@/lib/api";
 import type { Alert, AlertStatus, InvestigationEvidence } from "@/lib/types";
 import { useInvestigationSessions } from "@/lib/use-investigation-sessions";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 interface ActionableAlertsProps {
@@ -82,6 +82,10 @@ const firstIpLike = (alert: Alert) => {
   if (alert.source_ip) return alert.source_ip;
   const text = [alert.summary, alert.rule_description, alert.root_cause, ...(alert.iocs || [])].join(" ");
   return text.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0] || "";
+};
+
+const isDocumentationIp = (value?: string) => {
+  return /^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}$/.test(value || "");
 };
 
 const getDecisionQuestion = (alert: Alert) => {
@@ -307,6 +311,8 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
         {alertGroups.map((group, index) => {
           const alert = group.primary;
           const groupedCount = group.alerts.length;
+          const sourceIp = firstIpLike(alert);
+          const isTestLike = Boolean(alert.sampledata || isDocumentationIp(sourceIp));
           return (
           <div key={group.key}>
             {index > 0 && <Separator className="my-4" />}
@@ -325,9 +331,9 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
                   {groupedCount > 1 && (
                     <Badge variant="outline">同類 {groupedCount} 筆</Badge>
                   )}
-                  {alert.sampledata && (
+                  {isTestLike && (
                     <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-                      測試資料
+                      {alert.sampledata ? "測試資料" : "測試/文件 IP"}
                     </Badge>
                   )}
                   <Badge
@@ -351,8 +357,13 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
                 <p className="mt-2 text-xs text-muted-foreground">
                   電腦：{alert.agent_name}
                   {alert.purpose ? ` / 用途：${alert.purpose}` : ""}
-                  {alert.source_ip ? ` / 來源 IP：${alert.source_ip}` : ""}
+                  {sourceIp ? ` / 來源 IP：${sourceIp}` : ""}
                 </p>
+                {isDocumentationIp(sourceIp) && (
+                  <p className="mt-1 text-xs text-blue-700 dark:text-blue-200">
+                    此來源 IP 屬於文件保留網段，通常代表測試或範例資料，不是真實外部攻擊來源。
+                  </p>
+                )}
                 {groupedCount > 1 && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     發生次數：{groupedCount} 次 / 時間：{formatGroupTimeRange(group.alerts)}
@@ -361,7 +372,7 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
               </div>
 
               {splitActionLines(alert.recommended_action).length > 0 && (
-                <div className="rounded-lg border border-border p-3">
+                <div className="border-l-2 border-border pl-3">
                   <div className="text-xs font-medium text-muted-foreground">建議處理順序</div>
                   <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm">
                     {splitActionLines(alert.recommended_action).slice(0, 4).map((line) => (
@@ -381,7 +392,7 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
                   className="gap-1"
                 >
                   <Search data-icon="inline-start" />
-                  深入調查
+                  用 MCP 查證
                 </Button>
                 <Button
                   size="sm"
@@ -409,22 +420,22 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
                   <XCircle data-icon="inline-start" />
                   標記誤報
                 </Button>
-              </div>
-
-              <details className="rounded-lg border border-border px-3 py-2">
-                <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-                  <ChevronDown className="size-4" />
-                  IT 詳細資訊
-                </summary>
-                <div className="mt-3">
-                  <TechnicalAlertDetails alert={alert} compact />
-                  {groupedCount > 1 && (
-                    <div className="mt-3 rounded-md border bg-background p-3 text-xs text-muted-foreground">
-                      這張卡合併了 {groupedCount} 筆同類告警。按上方處理按鈕時，會一起更新這些告警的狀態。
-                    </div>
+                <a
+                  href={`/?tab=alerts&alert=${encodeURIComponent(alert.id)}`}
+                  className={cn(
+                    buttonVariants({ variant: "link", size: "sm" }),
+                    "gap-1 px-1 text-muted-foreground"
                   )}
+                >
+                  <ExternalLink data-icon="inline-start" />
+                  查看完整告警
+                </a>
+              </div>
+              {groupedCount > 1 && (
+                <div className="text-xs text-muted-foreground">
+                  這張卡合併了 {groupedCount} 筆同類告警。按處理按鈕時，會一起更新這些告警的狀態。
                 </div>
-              </details>
+              )}
             </div>
           </div>
           );
@@ -439,9 +450,9 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
     >
       <SheetContent className="w-[min(720px,calc(100vw-1rem))] gap-0 p-0 sm:max-w-none">
         <SheetHeader className="border-b pr-12">
-          <SheetTitle>深入調查</SheetTitle>
+          <SheetTitle>MCP 查證</SheetTitle>
           <SheetDescription>
-            留在這筆事件流程內查 Wazuh 紀錄；這裡只查詢，不會封鎖或隔離任何設備。
+            告警已先由 LLM 翻成白話；需要更多線索時，才從這裡讀取 Wazuh 紀錄。
           </SheetDescription>
         </SheetHeader>
 
@@ -449,9 +460,12 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="space-y-4 overflow-auto p-4">
               <div className="rounded-lg border bg-muted/40 p-4">
-                <div className="text-xs font-medium text-muted-foreground">正在調查的事件</div>
+                <div className="text-xs font-medium text-muted-foreground">LLM 白話摘要</div>
                 <div className="mt-1 text-base font-semibold">
                   {getPlainLanguageTitle(investigatingAlert)}
+                </div>
+                <div className="mt-2 text-sm leading-6 text-muted-foreground">
+                  {getPlainBusinessImpact(investigatingAlert)}
                 </div>
                 <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
                   <div>
@@ -477,7 +491,7 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
               </div>
 
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-100">
-                調查只會讀取 Wazuh 紀錄並整理摘要，不會執行封鎖、隔離、停用帳號或修改設定。
+                MCP 是按需查證工具。點下方問題後才會讀取 Wazuh 紀錄；這裡不會封鎖、隔離、停用帳號或修改設定。
               </div>
 
               <div className="space-y-2">
@@ -501,7 +515,7 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
               <div className="space-y-3">
                 {investigationSession.messages.length === 0 ? (
                   <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                    尚未開始調查。點上方問題後，系統會查 Wazuh 並把結果整理在這裡。
+                    尚未啟動 MCP 查證。上方白話摘要已可先判斷；需要更多線索時再點問題查 Wazuh。
                   </div>
                 ) : (
                   investigationSession.messages.map((message, index) => (
@@ -528,7 +542,7 @@ export function ActionableAlerts({ alerts, onStatusChange }: ActionableAlertsPro
 
               {investigationSession.evidence.length > 0 && (
                 <details className="rounded-lg border p-3">
-                  <summary className="cursor-pointer text-sm font-medium">IT 查詢紀錄</summary>
+                  <summary className="cursor-pointer text-sm font-medium">MCP 查詢紀錄</summary>
                   <div className="mt-3 space-y-2">
                     {investigationSession.evidence.map((item, index) => (
                       <div key={`${item.tool}-${index}`} className="rounded-md border bg-muted/30 p-3 text-xs">
