@@ -2,14 +2,8 @@
 
 # ── Load bridge config ─────────────────────────────────
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_BRIDGE_ENV="$_SCRIPT_DIR/../../bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-LM_STUDIO_URL="${LM_STUDIO_URL:-http://localhost:1234/v1/chat/completions}"
-LM_STUDIO_MODELS_URL="${LM_STUDIO_MODELS_URL:-${LM_STUDIO_URL%/chat/completions}/models}"
-MCP_SERVER_URL="${MCP_SERVER_URL:-http://localhost:3030}"
+# shellcheck disable=SC1091
+source "$_SCRIPT_DIR/../../scripts/lib/load-config.sh"
 
 #
 # test_failures.sh — Sprint 2D 失敗情境驗證
@@ -24,7 +18,7 @@ MCP_SERVER_URL="${MCP_SERVER_URL:-http://localhost:3030}"
 #
 
 set -e
-BRIDGE_HOST="${BRIDGE_HOST:-http://localhost:$BRIDGE_PORT}"
+BRIDGE_HOST="${BRIDGE_HOST:-$BRIDGE_LOCAL_BASE}"
 MCP_CONTAINER="${MCP_CONTAINER:-wazuh-mcp-server}"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }

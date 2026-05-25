@@ -117,7 +117,7 @@ class FakeLLMClient:
     def __init__(self, state: SimpleNamespace) -> None:
         self.state = state
 
-    async def post(self, url: str, json: dict[str, Any], timeout: float) -> httpx.Response:
+    async def post(self, url: str, json: dict[str, Any], timeout: float, **kwargs: Any) -> httpx.Response:
         self.state.llm_call_count += 1
         self.state.tool_turn += 1
         if self.state.tool_turn % 2 == 1:

@@ -27,7 +27,7 @@ MOCK_TRIAGE = {
 
 
 class FakeLLMClient:
-    async def post(self, url: str, json: dict[str, Any], timeout: float) -> httpx.Response:
+    async def post(self, url: str, json: dict[str, Any], timeout: float, **kwargs: Any) -> httpx.Response:
         await asyncio.sleep(0.2)
         request = httpx.Request("POST", url)
         return httpx.Response(
@@ -61,6 +61,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("MCP_SERVER_URL", "")
     monkeypatch.setenv("MCP_API_KEY", "")
     monkeypatch.setenv("AGENTIC_FORCE_LEVEL_GTE", "99")
+    monkeypatch.setenv("DASHBOARD_V2_URL", "http://127.0.0.1:3000")
 
     modules = fresh_bridge_import(["app", "db"])
     bridge = modules["app"]
@@ -111,9 +112,9 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
             "cve_feed": {"status": "fresh"},
         }
 
-    monkeypatch.setattr(bridge.dashboard_ui.digest, "collect_status", fake_collect_status)
+    monkeypatch.setattr(bridge.ops_api.digest, "collect_status", fake_collect_status)
     monkeypatch.setattr(
-        bridge.dashboard_ui.org_profile,
+        bridge.ops_api.org_profile,
         "find_asset",
         lambda name: {
             "role": "門市 POS 收銀系統",
@@ -122,6 +123,34 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
             "notes": "負責門市交易與發票。",
         } if name == "test-pos-store-01" else None,
     )
+
+    async def fake_get_agent_sca_summary(agent_id: str) -> dict[str, Any]:
+        return {
+            "score": 88 if agent_id == "001" else 44,
+            "policy": "CIS Benchmark",
+            "policy_id": "cis",
+            "passed": 8,
+            "failed": 2,
+            "invalid": 0,
+            "total": 10,
+            "last_scan": "2026-05-18T00:00:00Z",
+            "failed_checks": [],
+            "plain_failed_checks": [],
+            "available": True,
+        }
+
+    async def fake_agents_from_status() -> list[dict[str, Any]]:
+        return (await fake_collect_status())["agents"]["details"]
+
+    restarted_agents: list[str] = []
+
+    async def fake_restart_agent(agent_id: str) -> dict[str, Any]:
+        restarted_agents.append(agent_id)
+        return {"data": {"affected_items": [{"id": agent_id}]}}
+
+    monkeypatch.setattr(bridge.ops_api.wazuh, "list_agents", fake_agents_from_status)
+    monkeypatch.setattr(bridge.ops_api.wazuh, "get_agent_sca_summary", fake_get_agent_sca_summary)
+    monkeypatch.setattr(bridge.ops_api.wazuh, "restart_agent", fake_restart_agent)
 
     async def scenario() -> None:
         await db.init_db()
@@ -151,40 +180,83 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert self_test["overall"] == "ok"
                 assert self_test["title_zh"] == "系統可以正常使用"
 
-                dashboard_html = (await client.get("/dashboard")).text
-                assert 'class="cal-shell"' in dashboard_html
-                assert "今日待辦" in dashboard_html
-                assert 'class="score-panel' in dashboard_html
-                assert "健康度" in dashboard_html
-                assert "同類告警合併顯示" in dashboard_html
-                assert (
-                    "執行自我檢查" in dashboard_html
-                    or "補端點背景" in dashboard_html
-                    or "查看紀錄" in dashboard_html
-                )
-                assert "待辦事項" in dashboard_html
-                assert "?view=services" in dashboard_html
+                root_redirect = await client.get("/", follow_redirects=False)
+                assert root_redirect.status_code == 301
+                assert root_redirect.headers["location"] == "http://127.0.0.1:3000/"
 
-                services_html = (await client.get("/dashboard", params={"view": "services"})).text
-                assert "電腦端點 (2)" in services_html
-                assert "完整度" in services_html
-                assert "依每台電腦在線、背景、同步、版本與今日最高風險平均" in services_html
-                assert "分數說明" in services_html
-                assert "端點在線" in services_html
-                assert "今日中高風險" in services_html
-                assert "1 台離線，1 台缺背景" in services_html
-                assert ">100<" in services_html
-                assert ">20<" in services_html
-                assert "門市 POS 收銀系統" in services_html
-                assert "端點業務背景" in services_html
-                assert "編輯端點業務背景" in services_html
-                assert "尚未設定" not in services_html
-                assert "/admin/quick-add?agent=unprofiled-agent&amp;t=" in services_html
-                assert "安裝 Agent" in services_html
-                assert "上次同步：05/18 00:00" in services_html
-                assert "Agent 版本：Wazuh v4.14.5" in services_html
-                assert "作業系統：Linux 6.8" in services_html
-                assert "作業系統：macOS 15.5" in services_html
+                dashboard_redirect = await client.get("/dashboard", follow_redirects=False)
+                assert dashboard_redirect.status_code == 301
+                assert dashboard_redirect.headers["location"] == "http://127.0.0.1:3000/"
+
+                services_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "services"},
+                    follow_redirects=False,
+                )
+                assert services_redirect.status_code == 301
+                assert services_redirect.headers["location"] == "http://127.0.0.1:3000/settings/endpoints"
+
+                platform_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "platform"},
+                    follow_redirects=False,
+                )
+                assert platform_redirect.status_code == 301
+                assert platform_redirect.headers["location"] == "http://127.0.0.1:3000/settings/status"
+
+                testing_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "advanced"},
+                    follow_redirects=False,
+                )
+                assert testing_redirect.status_code == 301
+                assert testing_redirect.headers["location"] == "http://127.0.0.1:3000/settings/testing"
+
+                notifications_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "notifications"},
+                    follow_redirects=False,
+                )
+                assert notifications_redirect.status_code == 301
+                assert notifications_redirect.headers["location"] == "http://127.0.0.1:3000/settings/notifications"
+
+                invalid_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "invalid"},
+                    follow_redirects=False,
+                )
+                assert invalid_redirect.status_code == 301
+                assert invalid_redirect.headers["location"] == "http://127.0.0.1:3000/"
+
+                dashboard_summary = (await client.get("/api/dashboard/summary")).json()
+                assert set(dashboard_summary) >= {
+                    "alerts",
+                    "riskSummary",
+                    "endpoints",
+                    "systemHealth",
+                    "notifications",
+                    "install",
+                    "alertTrends",
+                }
+                assert dashboard_summary.get("demo") is None
+                assert len(dashboard_summary["endpoints"]) == 2
+                endpoint_by_name = {item["name"]: item for item in dashboard_summary["endpoints"]}
+                assert endpoint_by_name["test-pos-store-01"]["purpose"] == "門市 POS 收銀系統"
+                assert endpoint_by_name["test-pos-store-01"]["status"] == "online"
+                assert endpoint_by_name["test-pos-store-01"]["connection_score"] == 100
+                assert endpoint_by_name["test-pos-store-01"]["sca_score"] == 88
+                assert endpoint_by_name["unprofiled-agent"]["status"] == "offline"
+                assert endpoint_by_name["unprofiled-agent"]["purpose"] == "尚未設定"
+                assert endpoint_by_name["unprofiled-agent"]["sca_score"] == 44
+
+                recheck_response = await client.post("/api/dashboard/endpoints/001/recheck")
+                assert recheck_response.status_code == 200
+                recheck_payload = recheck_response.json()
+                assert recheck_payload["ok"] is True
+                assert recheck_payload["agent_id"] == "001"
+                assert recheck_payload["previous_score"] == 88
+                assert "重新檢查" in recheck_payload["message"]
+                assert restarted_agents == ["001"]
 
                 quick_add_html = (
                     await client.get(
@@ -218,25 +290,13 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert "回電腦端點" in expired_quick_add_html
                 assert "關閉並重新整理" in expired_quick_add_html
 
-                platform_html = (await client.get("/dashboard", params={"view": "platform"})).text
-                assert "自我檢查" in platform_html
-                assert "/self-test" in platform_html
-                assert "上線設定" in platform_html
-                assert "?view=setup" in platform_html
-
-                setup_html = (await client.get("/dashboard", params={"view": "setup"})).text
-                assert "上線檢查" in setup_html
-                assert "設定通知並測試成功" in setup_html
-                assert "安裝 Agent" in setup_html
-                assert "設定業務用途" in setup_html
-                assert "/admin/notifications?channel=line" in setup_html
-                assert "/admin/notifications?channel=slack" in setup_html
-                assert "/admin/notifications" in setup_html
-                assert "Slack" in setup_html
-                assert "LINE" in setup_html
-                assert "Telegram" in setup_html
-                assert "Email" in setup_html
-                assert "正常操作、交給 IT、已處理或誤報" in setup_html
+                setup_redirect = await client.get(
+                    "/dashboard",
+                    params={"view": "setup"},
+                    follow_redirects=False,
+                )
+                assert setup_redirect.status_code == 301
+                assert setup_redirect.headers["location"] == "http://127.0.0.1:3000/settings/status"
 
                 notification_html = (
                     await client.get(
@@ -384,11 +444,13 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert row["llm_error"] in (None, "")
                 assert row["llm_iocs"] == ["10.0.1.45"]
 
-                dashboard_with_alert = (await client.get("/dashboard")).text
-                assert "正常操作" in dashboard_with_alert
-                assert "交給 IT" in dashboard_with_alert
-                assert "已處理" in dashboard_with_alert
-                assert "誤報" in dashboard_with_alert
+                dashboard_with_alert = (await client.get("/api/dashboard/summary")).json()
+                dashboard_alerts = dashboard_with_alert["alerts"]
+                assert any(alert["id"] == str(row["id"]) for alert in dashboard_alerts)
+                dashboard_row = next(alert for alert in dashboard_alerts if alert["id"] == str(row["id"]))
+                assert dashboard_row["status"] == "pending"
+                assert dashboard_row["iocs"] == ["10.0.1.45"]
+                assert dashboard_row["technical_evidence"]["indicators"]["iocs"] == ["10.0.1.45"]
 
                 case_response = await client.post(
                     f"/dashboard/alerts/{row['id']}/case",

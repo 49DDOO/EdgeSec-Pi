@@ -12,14 +12,8 @@ set -euo pipefail
 
 # ── Load unified config (bridge.env) ──────────────
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_BRIDGE_ENV="$_SCRIPT_DIR/../bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-WAZUH_API_URL="${WAZUH_API_URL:-https://localhost:55000}"
-WAZUH_API_URL="${WAZUH_API_URL%/}"
-
+# shellcheck disable=SC1091
+source "$_SCRIPT_DIR/lib/load-config.sh"
 
 MANAGER_CT="single-node-wazuh.manager-1"
 CONF_HOST_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../wazuh-stack/wazuh-docker/single-node/config/wazuh_cluster/wazuh_manager.conf"

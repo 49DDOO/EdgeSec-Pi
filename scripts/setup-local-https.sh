@@ -7,17 +7,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$ROOT/scripts"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/load-config.sh"
 CERT_DIR="$ROOT/scripts/certs"
 ENV_FILE="$ROOT/bridge.env"
 
 mkdir -p "$CERT_DIR"
-
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-fi
 
 MANAGER_HOST="${MANAGER_HOST:-127.0.0.1}"
 BRIDGE_HOST="${BRIDGE_HOST:-$MANAGER_HOST}"

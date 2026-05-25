@@ -125,7 +125,7 @@ Restart the Dashboard:
 ### 6. Open the Dashboard
 
 ```text
-https://localhost:8001/dashboard?view=setup
+http://127.0.0.1:3000/settings/status
 ```
 
 For first-time setup, follow this order:
@@ -249,7 +249,7 @@ environment readiness passed
 Then open:
 
 ```text
-https://localhost:8001/dashboard?view=platform
+http://127.0.0.1:3000/settings/status
 ```
 
 Click the self-check button. If it reports that the system is usable, the main

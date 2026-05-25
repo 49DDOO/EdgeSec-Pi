@@ -24,6 +24,53 @@ This runs:
 
 It does not require Docker, real Wazuh, real LM Studio, or Slack.
 
+## Batch Test Runner With Logs
+
+For a single command that runs grouped checks and writes logs to files:
+
+```bash
+./test_sys/run_all.sh quick
+```
+
+Logs are written under:
+
+```text
+test_sys/logs/YYYYMMDD-HHMMSS/
+```
+
+Available modes:
+
+| Command | Scope |
+|---------|-------|
+| `./test_sys/run_all.sh quick` | Backend default tests and dashboard lint/build. |
+| `./test_sys/run_all.sh env` | Local service readiness check. |
+| `./test_sys/run_all.sh release` | `quick` plus quality gate and mock eval. |
+| `./test_sys/run_all.sh full` | `release` plus service readiness, real LM Studio model test, and Wazuh E2E smoke test. |
+| `./test_sys/run_all.sh manual` | Prints manual interactive test entrypoints. |
+
+## Unified Port / URL Config
+
+Service ports and non-secret URLs are managed from:
+
+```text
+bridge.env
+```
+
+Shell scripts load the shared parser:
+
+```text
+scripts/lib/load-config.sh
+```
+
+To see the effective config before running real-environment tests:
+
+```bash
+./scripts/run.sh config
+```
+
+`wazuh-llm-bridge/.env` should be used for secrets such as tokens and passwords.
+When the same port or URL exists in both files, `bridge.env` wins.
+
 ## Test Categories
 
 | Command | Scope | External dependencies |
@@ -60,7 +107,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 RUN_MODEL_TESTS=1 python3 -m pytest -m model te
 This checks the real services configured by `bridge.env`:
 
 - `http://localhost:$BRIDGE_PORT/health`
-- `http://localhost:$BRIDGE_PORT/dashboard`
+- `http://127.0.0.1:3000`
 - `http://localhost:$BRIDGE_PORT/docs`
 - LM Studio `/v1/models` derived from `LM_STUDIO_URL`
 - Wazuh API from `WAZUH_API_URL` when available
@@ -74,7 +121,7 @@ because they may be intentionally disabled for bridge-only development.
 The dashboard also includes a non-technical self-test button:
 
 ```text
-http://localhost:$BRIDGE_PORT/dashboard
+http://127.0.0.1:3000/settings/testing
 ```
 
 It calls:

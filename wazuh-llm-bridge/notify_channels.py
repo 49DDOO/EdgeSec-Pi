@@ -83,7 +83,16 @@ def _alert_text(alert: dict[str, Any], parsed: dict[str, Any] | None) -> str:
     impact = data.get("impact_zh") or ""
     next_step = data.get("next_step_zh") or ""
     endpoint_lines = owner_context.management_context_lines(alert, markdown=False)
+    meta = alert.get("_edgesec") if isinstance(alert.get("_edgesec"), dict) else {}
+    is_sample = alert.get("@sampledata") is True or bool(meta.get("sampledata"))
     parts = [f"EdgeSec-Pi 告警 [{severity}]", "", "哪台電腦", *endpoint_lines, "", "發生什麼事", str(summary)]
+    if is_sample:
+        parts = [
+            "🧪 測試資料，不是真實攻擊",
+            "這是 Wazuh Sample Data，用來測試通知流程。",
+            "",
+            *parts,
+        ]
     if impact:
         parts += ["", "不處理的後果", str(impact)]
     if next_step:

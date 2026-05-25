@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     agent_ip         TEXT,
     full_log         TEXT,
     -- Gemma's structured verdict (NULL if LLM call failed):
-    llm_status       TEXT    NOT NULL DEFAULT 'pending', -- 'ok' | 'error'
+    llm_status       TEXT    NOT NULL DEFAULT 'pending', -- 'ok' | 'error' | 'skipped'
     llm_severity     TEXT,                                -- critical|high|medium|low|info
     llm_root_cause   TEXT,
     llm_action       TEXT,
@@ -101,7 +101,8 @@ def _save_alert_sync(alert: dict[str, Any],
                      llm_reply: str,
                      parsed: dict[str, Any] | None,
                      latency_ms: int,
-                     error: str | None) -> int:
+                     error: str | None,
+                     llm_status: str | None = None) -> int:
     rule  = alert.get("rule")  or {}
     agent = alert.get("agent") or {}
     meta  = alert.get("_edgesec") or {}
@@ -129,7 +130,7 @@ def _save_alert_sync(alert: dict[str, Any],
                 agent.get("name"),
                 agent.get("ip"),
                 alert.get("full_log"),
-                "error" if error else "ok",
+                llm_status or ("error" if error else "ok"),
                 (p.get("severity") or "").lower() or None,
                 p.get("root_cause"),
                 p.get("action"),
@@ -153,11 +154,17 @@ _LIST_COLUMNS = (
     "raw_alert"
 )
 
+_NOT_SAMPLEDATA_SQL = (
+    "COALESCE(json_extract(raw_alert, '$.\"@sampledata\"'), 0) != 1 "
+    "AND COALESCE(json_extract(raw_alert, '$._edgesec.sampledata'), 0) != 1"
+)
+
 
 def _list_alerts_sync(limit: int, severity: str | None,
                       rule_id: str | None,
                       agent_name: str | None = None,
-                      active_only: bool = False) -> list[dict[str, Any]]:
+                      active_only: bool = False,
+                      include_sampledata: bool = False) -> list[dict[str, Any]]:
     where, args = [], []
     if severity:
         where.append("llm_severity = ?")
@@ -170,6 +177,8 @@ def _list_alerts_sync(limit: int, severity: str | None,
         args.append(agent_name)
     if active_only:
         where.append("case_status IN ('open', 'in_progress')")
+    if not include_sampledata:
+        where.append(_NOT_SAMPLEDATA_SQL)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     args.append(int(limit))
     with _connect() as conn:
@@ -300,60 +309,70 @@ def _fetch_correlation_context_sync(srcip: str | None,
 
 def _compute_stats_sync() -> dict[str, Any]:
     with _connect() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM alerts WHERE {_NOT_SAMPLEDATA_SQL}"
+        ).fetchone()[0]
 
         last_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400"
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400"
         ).fetchone()[0]
 
         cur = conn.execute(
             "SELECT COALESCE(llm_severity, 'unclassified') AS s, COUNT(*) AS c "
-            "FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "GROUP BY s"
         )
         by_severity_24h = {row["s"]: row["c"] for row in cur.fetchall()}
 
         cur = conn.execute(
             "SELECT COALESCE(llm_severity, 'unclassified') AS s, COUNT(*) AS c "
-            "FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND case_status IN ('open', 'in_progress') "
             "GROUP BY s"
         )
         open_by_severity_24h = {row["s"]: row["c"] for row in cur.fetchall()}
 
         open_cases_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND case_status IN ('open', 'in_progress')"
         ).fetchone()[0]
 
         closed_cases_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND case_status NOT IN ('open', 'in_progress')"
         ).fetchone()[0]
 
         cur = conn.execute(
             "SELECT AVG(llm_latency_ms) FROM "
             "(SELECT llm_latency_ms FROM alerts "
-            " WHERE llm_status='ok' "
+            f" WHERE llm_status='ok' AND {_NOT_SAMPLEDATA_SQL} "
             " ORDER BY received_at DESC LIMIT 100)"
         )
         avg_lat = cur.fetchone()[0]
 
         cur = conn.execute(
             "SELECT rule_id, rule_description, COUNT(*) AS c FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "GROUP BY rule_id ORDER BY c DESC LIMIT 5"
         )
         top_rules = [dict(row) for row in cur.fetchall()]
 
         errors_24h = conn.execute(
-            "SELECT COUNT(*) FROM alerts "
-            "WHERE received_at > strftime('%s','now') - 86400 "
+            "SELECT COUNT(*) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
             "AND llm_status = 'error'"
         ).fetchone()[0]
 
@@ -370,6 +389,61 @@ def _compute_stats_sync() -> dict[str, Any]:
     }
 
 
+def _alert_trends_sync(days: int = 7, include_sampledata: bool = False) -> list[dict[str, Any]]:
+    day_count = max(1, min(int(days or 7), 30))
+    now = time.time()
+    start = now - ((day_count - 1) * 86400)
+    labels = [
+        time.strftime("%m/%d", time.localtime(start + (index * 86400)))
+        for index in range(day_count)
+    ]
+    trends = {
+        label: {"date": label, "critical": 0, "high": 0, "medium": 0, "low": 0, "endpoints": {}}
+        for label in labels
+    }
+    where = ["received_at >= ?"]
+    args: list[Any] = [start]
+    if not include_sampledata:
+        where.append(_NOT_SAMPLEDATA_SQL)
+    where_sql = " AND ".join(where)
+
+    with _connect() as conn:
+        cur = conn.execute(
+            f"""
+            SELECT strftime('%m/%d', received_at, 'unixepoch', 'localtime') AS day,
+                   COALESCE(llm_severity, 'unclassified') AS severity,
+                   COUNT(*) AS count
+              FROM alerts
+             WHERE {where_sql}
+             GROUP BY day, severity
+            """,
+            args,
+        )
+        for row in cur.fetchall():
+            day = row["day"]
+            severity = row["severity"]
+            if day in trends and severity in ("critical", "high", "medium", "low"):
+                trends[day][severity] = int(row["count"] or 0)
+
+        cur = conn.execute(
+            f"""
+            SELECT strftime('%m/%d', received_at, 'unixepoch', 'localtime') AS day,
+                   COALESCE(NULLIF(agent_name, ''), '未知設備') AS endpoint,
+                   COUNT(*) AS count
+              FROM alerts
+             WHERE {where_sql}
+             GROUP BY day, endpoint
+            """,
+            args,
+        )
+        for row in cur.fetchall():
+            day = row["day"]
+            if day in trends:
+                trends[day]["endpoints"][row["endpoint"]] = int(row["count"] or 0)
+
+    return [trends[label] for label in labels]
+
+
 # ─── async wrappers ─────────────────────────────────────────────────────
 async def init_db() -> None:
     await asyncio.to_thread(init_db_sync)
@@ -379,9 +453,10 @@ async def save_alert(alert: dict[str, Any],
                      llm_reply: str,
                      parsed: dict[str, Any] | None,
                      latency_ms: int,
-                     error: str | None) -> int:
+                     error: str | None,
+                     llm_status: str | None = None) -> int:
     return await asyncio.to_thread(
-        _save_alert_sync, alert, llm_reply, parsed, latency_ms, error
+        _save_alert_sync, alert, llm_reply, parsed, latency_ms, error, llm_status
     )
 
 
@@ -389,14 +464,19 @@ async def list_alerts(limit: int = 50,
                       severity: str | None = None,
                       rule_id: str | None = None,
                       agent_name: str | None = None,
-                      active_only: bool = False) -> list[dict[str, Any]]:
+                      active_only: bool = False,
+                      include_sampledata: bool = False) -> list[dict[str, Any]]:
     return await asyncio.to_thread(
-        _list_alerts_sync, limit, severity, rule_id, agent_name, active_only
+        _list_alerts_sync, limit, severity, rule_id, agent_name, active_only, include_sampledata
     )
 
 
 async def compute_stats() -> dict[str, Any]:
     return await asyncio.to_thread(_compute_stats_sync)
+
+
+async def alert_trends(days: int = 7, include_sampledata: bool = False) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(_alert_trends_sync, days, include_sampledata)
 
 
 async def update_alert_case(alert_id: int,

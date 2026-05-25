@@ -25,6 +25,32 @@ import org_profile  # for context_for_alert() — business context injection
 import siem         # source labels for Wazuh / future SIEM adapters
 
 
+def _compact_text(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text[:limit]
+
+
+def _format_prompt_value(value: Any, *, limit: int = 600) -> str:
+    """Render structured Wazuh fields without assuming one exact schema."""
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, dict):
+        lines = []
+        for key, item in value.items():
+            rendered = _format_prompt_value(item, limit=180)
+            if rendered:
+                lines.append(f"{key}: {rendered}")
+        return "; ".join(lines)[:limit]
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            rendered = _format_prompt_value(item, limit=220)
+            if rendered:
+                parts.append(rendered)
+        return " | ".join(parts)[:limit]
+    return _compact_text(value, limit)
+
+
 def _severity_rubric(source: str, source_name: str) -> str:
     if source == "wazuh":
         return """Severity rubric — ANCHORED to Wazuh's own level classification.
@@ -116,10 +142,34 @@ def _extract_extra_context(alert: dict[str, Any]) -> str:
     # CIS / SCA compliance check — has authoritative remediation steps
     sca_check = ((data.get("sca") or {}).get("check") or {})
     if sca_check:
-        rationale   = (sca_check.get("rationale")   or "").strip()
-        remediation = (sca_check.get("remediation") or "").strip()
-        result      = (sca_check.get("result")      or "").strip()
-        title       = (sca_check.get("title")       or "").strip()
+        rationale   = _compact_text(sca_check.get("rationale"), 700)
+        remediation = _compact_text(sca_check.get("remediation"), 1200)
+        result      = _compact_text(sca_check.get("result"), 120)
+        title       = _compact_text(sca_check.get("title"), 240)
+        description = _compact_text(sca_check.get("description"), 700)
+        condition   = _compact_text(sca_check.get("condition"), 160)
+        checks      = _format_prompt_value(
+            sca_check.get("checks")
+            or sca_check.get("rules")
+            or sca_check.get("check")
+            or sca_check.get("commands"),
+            limit=900,
+        )
+        compliance  = _format_prompt_value(
+            sca_check.get("compliance")
+            or sca_check.get("compliance_refs")
+            or sca_check.get("requirements"),
+            limit=700,
+        )
+        optional_lines = []
+        if description:
+            optional_lines.append(f"  Description: {description}")
+        if condition:
+            optional_lines.append(f"  Checks condition: {condition}")
+        if checks:
+            optional_lines.append(f"  Checks:      {checks}")
+        if compliance:
+            optional_lines.append(f"  Compliance:  {compliance}")
         extras.append(
             "ALERT TYPE: CIS / SCA compliance baseline check.\n"
             "This is a *configuration posture* finding, not an active attack. "
@@ -127,11 +177,12 @@ def _extract_extra_context(alert: dict[str, Any]) -> str:
             "or 'block IP'.\n"
             f"  Check:       {title}\n"
             f"  Result:      {result}\n"
-            f"  Why:         {rationale[:400]}\n"
+            + ("\n".join(optional_lines) + "\n" if optional_lines else "")
+            + f"  Why:         {rationale}\n"
             f"  Official remediation (translate this into Traditional Chinese in next_step_zh — "
             f"if it's a CLI command, give the actual command; if it's a System Settings path, "
             f"name the exact menu items; if it's an MDM profile, say so):\n"
-            f"      {remediation[:600]}"
+            f"      {remediation}"
         )
 
     # Vulnerability detector — has CVE id and CVSS

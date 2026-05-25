@@ -40,7 +40,7 @@ uvicorn app:app --host 0.0.0.0 --port "$BRIDGE_PORT" \
 the bridge see the same service URLs. The shell `source` above is still needed
 for the `uvicorn --port "$BRIDGE_PORT"` argument.
 
-Open the management-facing dashboard at `https://localhost:$BRIDGE_PORT/dashboard`.
+Open the management-facing dashboard at `http://127.0.0.1:3000`.
 
 For local/LAN HTTPS, prefer the wrapper because it generates and trusts the
 local certificate consistently:
@@ -117,11 +117,40 @@ Restart wazuh-manager and tail `/var/ossec/logs/integrations.log`.
 | `LM_TIMEOUT_S` | Per-request timeout. Bump if your model is slow on long logs. |
 | `<level>` in ossec.conf | Cheapest filter — don't ship noise to the LLM at all. |
 
+## Remote action tokens
+
+Slack buttons and future remote remediation links must use
+`remote_action_tokens.py` instead of embedding raw command parameters. The token
+is a short-lived, one-time HMAC ticket that binds:
+
+- `action` — for example `block_ip`, `unblock_ip`, or `isolate_endpoint`
+- `agent_id` — the Wazuh agent that the backend must re-check before executing
+- `target` — the IP, endpoint name, or other action target
+- `nonce` and `exp` — replay protection and expiry
+
+The button or link is only a request to perform an action. The backend must
+consume the token, verify the expected action, check authorization, and then
+execute through the normal Wazuh or internal API path. Do not put shell commands,
+URLs with privileged secrets, or long-lived credentials inside Slack messages.
+
+Configuration:
+
+| Knob | Effect |
+|------|--------|
+| `REMOTE_ACTION_TOKEN_TTL_S` | Token lifetime in seconds; default is 300. |
+| `REMOTE_ACTION_TOKEN_SECRET` | Optional HMAC secret. If omitted, a local secret file is generated. |
+| `REMOTE_ACTION_TOKEN_SECRET_FILE` | Optional path for the generated secret. |
+| `REMOTE_ACTION_ALLOWED_USERS` | Optional comma-separated Slack user IDs allowed to run high-risk actions. |
+
+Legacy `SLACK_ACTION_*` env names are still accepted as fallbacks, but new code
+should use the `REMOTE_ACTION_*` names because the same guard is intended for
+Slack, Dashboard, email approval links, and future mobile workflows.
+
 ## Next steps
 
 - For production, put the bridge behind TLS and set `WEBHOOK_SECRET` so only
   your Wazuh manager can post alerts.
-- Use `/dashboard` for owner-facing summaries and Wazuh Dashboard for IT
+- Use the Next.js Dashboard for owner-facing summaries and Wazuh Dashboard for IT
   investigation.
 - Keep `.env`, `data/`, and logs out of git; copy examples from
   `.env.example` and `../bridge.env.example`.

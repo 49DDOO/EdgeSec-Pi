@@ -82,6 +82,16 @@ lan_ip() {
     || echo "127.0.0.1"
 }
 
+random_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  elif command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr -d '-' | tr '[:upper:]' '[:lower:]'
+  else
+    date +%s%N
+  fi
+}
+
 require_macos() {
   if [[ "$(uname)" != "Darwin" ]]; then
     c_err "This installer is for macOS Dashboard hosts."
@@ -118,6 +128,7 @@ create_bridge_env() {
 
 BRIDGE_PORT=8001
 BRIDGE_PUBLIC_URL=https://$host:8001
+BRIDGE_BIND_HOST=0.0.0.0
 BRIDGE_SSL_CERTFILE=../scripts/certs/bridge.crt
 BRIDGE_SSL_KEYFILE=../scripts/certs/bridge.key
 
@@ -147,6 +158,10 @@ create_bridge_app_env() {
   fi
   c_log "creating wazuh-llm-bridge/.env from template"
   cp "$BRIDGE_DIR/.env.example" "$BRIDGE_APP_ENV"
+  /usr/bin/sed -i '' \
+    -e "s/^WEBHOOK_SECRET=.*/WEBHOOK_SECRET=$(random_secret)/" \
+    -e "s/^ACTIVE_RESPONSE_TOKEN=.*/ACTIVE_RESPONSE_TOKEN=$(random_secret)/" \
+    "$BRIDGE_APP_ENV"
   c_ok "created wazuh-llm-bridge/.env"
 }
 
@@ -281,10 +296,10 @@ check_advanced_query() {
 }
 
 print_next_steps() {
-  local port url
-  port="$(grep -E '^BRIDGE_PORT=' "$BRIDGE_ENV" | tail -1 | cut -d= -f2-)"
-  port="${port:-8001}"
-  url="https://localhost:$port/dashboard?view=setup"
+  local dashboard_port url
+  dashboard_port="$(grep -E '^DASHBOARD_PORT=' "$BRIDGE_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)"
+  dashboard_port="${dashboard_port:-3000}"
+  url="http://127.0.0.1:$dashboard_port/settings/status"
   echo
   c_ok "EdgeSec-Pi Dashboard is ready"
   echo

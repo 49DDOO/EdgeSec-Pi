@@ -17,19 +17,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 DIR="$(pwd)"
 
 # ── 0. Load unified config (bridge.env) from project root ──────────────
-_BRIDGE_ENV="$DIR/../bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
-_BRIDGE_APP_ENV="$DIR/../wazuh-llm-bridge/.env"
-if [[ -f "$_BRIDGE_APP_ENV" ]]; then
-  set -a; source "$_BRIDGE_APP_ENV"; set +a
-fi
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-export BRIDGE_PORT
+# shellcheck disable=SC1091
+source "$DIR/../scripts/lib/load-config.sh"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-WAZUH_API_URL="${WAZUH_API_URL:-https://localhost:55000}"
-WAZUH_API_URL="${WAZUH_API_URL%/}"
 
 WAZUH_VERSION="${WAZUH_VERSION:-v4.14.5}"  # must match the agent .deb version installed by apt
 COMPOSE_DIR="$DIR/wazuh-docker/single-node"

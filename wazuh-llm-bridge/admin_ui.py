@@ -21,7 +21,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Annotated, Any, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -44,6 +44,7 @@ ADMIN_PASS = admin_auth.ADMIN_PASS
 # Public URL used to construct deep-links sent to Slack. Empty disables
 # the "configure this agent" button entirely (gracefully degrade).
 BRIDGE_PUBLIC_URL = os.getenv("BRIDGE_PUBLIC_URL", "").rstrip("/")
+DASHBOARD_V2_URL = os.getenv("DASHBOARD_V2_URL", "http://127.0.0.1:3000").rstrip("/")
 
 _basic = admin_auth.basic_auth
 _check_admin = admin_auth.check_admin
@@ -56,6 +57,10 @@ def _html_escape(s: Any) -> str:
                                              .replace("<", "&lt;")  \
                                              .replace(">", "&gt;")  \
                                              .replace('"', "&quot;")
+
+
+def _dashboard_url(path: str = "/") -> str:
+    return urljoin(f"{DASHBOARD_V2_URL}/", path.lstrip("/"))
 
 
 def _render_admin_page(profile: dict[str, Any], flash: str = "") -> str:
@@ -82,6 +87,7 @@ def _render_admin_page(profile: dict[str, Any], flash: str = "") -> str:
     if flash:
         flash_html = (f'<div class="flash">{_html_escape(flash)}</div>')
 
+    setup_url = _dashboard_url("/settings/status")
     return f"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -521,6 +527,7 @@ def _render_notification_channel_page(channel: str, flash: str = "", token: str 
         raise HTTPException(status_code=404, detail="Unknown notification channel")
     tabs = _notification_tabs(channel, token)
     flash_html = f'<div class="flash">{_html_escape(flash)}</div>' if flash else ""
+    setup_url = _dashboard_url("/settings/status")
     return f"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -534,13 +541,13 @@ def _render_notification_channel_page(channel: str, flash: str = "", token: str 
       <h1>通知設定</h1>
       <p>每次只設定一個管道。切換頁籤不會改到其他通知設定。</p>
     </div>
-    <a class="button primary" href="/dashboard?view=setup">回上線設定</a>
+    <a class="button primary" href="{setup_url}">回上線設定</a>
   </div>
   {tabs}
   {flash_html}
   <div class="grid">{cards[channel]}</div>
   <div class="actions">
-    <a class="button primary" href="/dashboard?view=setup">回上線設定</a>
+    <a class="button primary" href="{setup_url}">回上線設定</a>
   </div>
 </body>
 </html>"""
@@ -576,6 +583,7 @@ def _render_notifications_page(flash: str = "", token: str = "", channel: str = 
     tabs = _notification_tabs(channel, token)
     flash_html = f'<div class="flash">{_html_escape(flash)}</div>' if flash else ""
 
+    setup_url = _dashboard_url("/settings/status")
     return f"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -589,7 +597,7 @@ def _render_notifications_page(flash: str = "", token: str = "", channel: str = 
       <h1>通知設定</h1>
       <p>LINE、Slack、Telegram、Email 可各自設定。至少一個管道測試成功後，就能回上線設定繼續安裝 Agent。</p>
     </div>
-    <a class="button primary" href="/dashboard?view=setup">回上線設定</a>
+    <a class="button primary" href="{setup_url}">回上線設定</a>
   </div>
   {tabs}
   {flash_html}
@@ -599,7 +607,7 @@ def _render_notifications_page(flash: str = "", token: str = "", channel: str = 
   </div>
 
   <div class="actions">
-    <a class="button primary" href="/dashboard?view=setup">回上線設定</a>
+    <a class="button primary" href="{setup_url}">回上線設定</a>
   </div>
 </body>
 </html>"""
@@ -1273,6 +1281,7 @@ function closeEditor() {{
 
 def _render_quick_add_saved(agent: str, saved: dict[str, Any], embed: bool = False) -> str:
     body_class = "drawer-mode" if embed else ""
+    endpoints_url = _dashboard_url("/settings/endpoints")
     return f"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -1333,7 +1342,7 @@ function closeEditor() {{
   if (window.parent && window.parent !== window) {{
     window.parent.postMessage({{ type: "edgesec-close-drawer", refresh: true }}, window.location.origin);
   }} else {{
-    window.location.href = "/dashboard?view=services";
+    window.location.href = "{endpoints_url}";
   }}
 }}
 </script>
@@ -1343,6 +1352,8 @@ function closeEditor() {{
 
 def _render_quick_add_unauthorized(agent: str, embed: bool = False) -> str:
     body_class = "drawer-mode" if embed else ""
+    today_url = _dashboard_url("/")
+    endpoints_url = _dashboard_url("/settings/endpoints")
     return f"""<!doctype html>
 <html lang="zh-Hant">
 <head>
@@ -1382,8 +1393,8 @@ def _render_quick_add_unauthorized(agent: str, embed: bool = False) -> str:
     <h1>此編輯連結已失效</h1>
     <p>這通常是因為儀表板開太久，安全連結已過期。請回到儀表板重新整理，再點一次「設定業務用途」。{f" 目標端點：{_html_escape(agent)}" if agent else ""}</p>
     <div class="actions">
-      <a class="button" target="_top" href="/dashboard">回今日待辦</a>
-      <a class="button" target="_top" href="/dashboard?view=services">回電腦端點</a>
+      <a class="button" target="_top" href="{today_url}">回今日待辦</a>
+      <a class="button" target="_top" href="{endpoints_url}">回電腦端點</a>
     </div>
     <div class="actionbar">
       <button type="button" onclick="closeEditor()">關閉並重新整理</button>
@@ -1395,7 +1406,7 @@ function closeEditor() {{
   if (window.parent && window.parent !== window) {{
     window.parent.postMessage({{ type: "edgesec-close-drawer", refresh: true }}, window.location.origin);
   }} else {{
-    window.location.href = "/dashboard";
+    window.location.href = "{today_url}";
   }}
 }}
 </script>

@@ -15,17 +15,10 @@ set -euo pipefail
 
 # ── Load unified config (bridge.env) ──────────────
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_BRIDGE_ENV="$_SCRIPT_DIR/../bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
-BRIDGE_PORT="${BRIDGE_PORT:-8001}"
-
+# shellcheck disable=SC1091
+source "$_SCRIPT_DIR/lib/load-config.sh"
 
 WAZUH_VERSION="${WAZUH_VERSION:-4.14.5}"
-MANAGER_HOST="${MANAGER_HOST:-localhost}"  # docker manager exposes :1514/1515
-WAZUH_AGENT_PORT="${WAZUH_AGENT_PORT:-1514}"
-WAZUH_AUTHD_PORT="${WAZUH_AUTHD_PORT:-1515}"
 ARCH="$(uname -m)"
 case "$ARCH" in
   arm64)  PKG_ARCH=arm64    ;;  # Apple Silicon (M1/M2/M3/M4)

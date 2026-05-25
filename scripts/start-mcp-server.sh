@@ -20,10 +20,8 @@ REPO_DIR="$ROOT/wazuh-stack/wazuh-mcp-server"
 COMPOSE_DIR="$ROOT/wazuh-stack/wazuh-mcp"
 ENV_FILE="$COMPOSE_DIR/.env"
 
-_BRIDGE_ENV="$ROOT/bridge.env"
-if [[ -f "$_BRIDGE_ENV" ]]; then
-  set -a; source "$_BRIDGE_ENV"; set +a
-fi
+# shellcheck disable=SC1091
+source "$DIR/lib/load-config.sh"
 
 c_log() { printf "\033[1;36m[%s]\033[0m %s\n" "$(date '+%H:%M:%S')" "$*"; }
 c_ok()  { printf "\033[1;32m[✓]\033[0m %s\n" "$*"; }

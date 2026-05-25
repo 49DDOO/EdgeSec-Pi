@@ -43,6 +43,7 @@ This repository has three separate parts:
 |------|---------|
 | `wazuh-llm-bridge/` | The main EdgeSec-Pi service. FastAPI receives Wazuh alerts, calls a local LLM, stores results in SQLite, renders the dashboard, and sends Slack messages. |
 | `wazuh-stack/` | A local Wazuh single-node lab stack for demo and testing. Use this when you do not already have Wazuh running. |
+| `dashboard/README.md` | Dashboard development notes, including the UI design policy. Material Design is a reference for consistency and accessibility, not a mandatory visual system. |
 | `INSTALL.md` / `INSTALL.en.md` | Complete from-zero installation guides in Traditional Chinese and English for the main Dashboard / Wazuh / Agent / notification flow. |
 | `install.sh` / `SETUP_GUIDE.md` | Optional LobeChat + Wazuh MCP Server flow. This is not required for the main Slack/dashboard pipeline. |
 
@@ -64,7 +65,7 @@ EdgeSec-Pi bridge
     +--> async queue + workers
     +--> local LLM via LM Studio
     +--> SQLite alert history
-    +--> owner dashboard (/dashboard)
+    +--> owner dashboard (dashboard/ Next.js app)
     +--> LINE / Slack / Telegram / email notification
     +--> optional response buttons
 
@@ -84,7 +85,7 @@ and response layer on top of it.
 | Local triage | Calls an LM Studio-compatible local model endpoint. |
 | Business summary | Traditional Chinese `summary_zh`, `impact_zh`, and `next_step_zh` for non-SOC users. |
 | IT context | Keeps technical fields such as rule ID, MITRE, IOC, root cause, and raw log. |
-| Dashboard | `/dashboard` shows owner-facing risk state, important events, and system health. |
+| Dashboard | `http://127.0.0.1:3000` shows owner-facing risk state, important events, and system health. |
 | Notifications | LINE, Slack, Telegram, or email. Slack Bot Token + Socket Mode enables interactive buttons when configured. |
 | Persistence | SQLite-backed alert history with `/alerts`, `/stats`, and `/status` APIs. |
 | Optional response | Wazuh Active Response helpers for IP block/unblock workflows. Endpoint isolation is pluggable and requires a tested agent-side script. |
@@ -178,7 +179,7 @@ cd scripts
 Then open:
 
 ```text
-https://localhost:$BRIDGE_PORT/dashboard
+http://127.0.0.1:3000
 ```
 
 The health endpoint is:
@@ -247,7 +248,7 @@ and use that address instead.
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /dashboard` | Owner-facing HTML dashboard. |
+| `GET /dashboard` | Compatibility redirect to the Next.js Dashboard. |
 | `GET /self-test` | Management-facing readiness check with Chinese action guidance. |
 | `GET /health` | Bridge process health and queue size. |
 | `GET /alerts` | Recent stored alerts. |
@@ -261,7 +262,7 @@ FastAPI's generated docs are available at:
 http://localhost:$BRIDGE_PORT/docs
 ```
 
-For non-technical owners, use the self-test button on `/dashboard`. It reports
+For non-technical owners, use the self-test button in the Dashboard. It reports
 whether the system is usable and which item IT should handle, without exposing
 terminal output or raw service logs.
 
