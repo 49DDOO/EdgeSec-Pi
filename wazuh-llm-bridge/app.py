@@ -7,7 +7,7 @@ Minimal async FastAPI webhook:
   1. POST /webhook receives a Wazuh alert (JSON)
   2. The handler enqueues the alert and returns 202 immediately,
      so Wazuh's integrator is NEVER blocked by LLM inference time.
-  3. Background workers pull alerts from the queue, extract
+  3. Background workers pull alerts from a priority queue, extract
      `rule.description` + `full_log`, and call LM Studio's
      OpenAI-compatible /v1/chat/completions endpoint.
   4. A bounded queue gives back-pressure (503) when bursts exceed
@@ -47,6 +47,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
+import alert_queue  # local module: priority queue for alert analysis work
 import db        # local module: SQLite persistence for alerts + LLM verdicts
 import detection_settings  # local module: dashboard category + LLM load controls
 import digest    # local module: daily freshness check (Wazuh ver / CVE feed / agents)
@@ -390,7 +391,7 @@ async def lifespan(app: FastAPI):
     _log_config()
     log.info("triage policy: %s", triage_router.describe_policy())
 
-    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+    queue: asyncio.Queue = alert_queue.AlertPriorityQueue(maxsize=QUEUE_MAXSIZE)
     client = httpx.AsyncClient()
     workers = [
         asyncio.create_task(consume(queue, client, i))

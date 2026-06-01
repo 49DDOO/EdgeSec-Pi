@@ -61,6 +61,7 @@ def fresh_bridge_import(module_names: Iterable[str]) -> dict[str, ModuleType]:
         "active_response_api",
         "admin_auth",
         "agent_loop",
+        "alert_queue",
         "app",
         "dashboard_ui",
         "db",
