@@ -221,6 +221,40 @@ function chatGreeting(group: AgentRunGroup | undefined): InvestigationMessage {
   };
 }
 
+function isStoredChatGreeting(message: InvestigationMessage) {
+  return message.role === "assistant" && message.content.startsWith("我正在看 ");
+}
+
+function splitLongSentence(text: string) {
+  if (text.length <= 160) return [text];
+  const parts = text
+    .split(/(?<=[。！？])\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) return [text];
+  const blocks: string[] = [];
+  let current = "";
+  parts.forEach((part) => {
+    const next = current ? `${current}${part}` : part;
+    if (next.length > 180 && current) {
+      blocks.push(current);
+      current = part;
+    } else {
+      current = next;
+    }
+  });
+  if (current) blocks.push(current);
+  return blocks;
+}
+
+function chatContentBlocks(content: string) {
+  return content
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap(splitLongSentence);
+}
+
 export function AgentRunsDashboard({
   onStatusChange,
   summary,
@@ -251,9 +285,13 @@ export function AgentRunsDashboard({
   const selectedAlert = selectedGroup?.primary;
   const chatKey = selectedAlert ? `asset:${assetKey(selectedAlert)}` : "";
   const chatSession = getSession(chatKey);
-  const chatMessages = chatSession.messages.length > 0
-    ? chatSession.messages
-    : [chatGreeting(selectedGroup)];
+  const storedChatMessages = chatSession.messages.filter((message, index) => (
+    index !== 0 || !isStoredChatGreeting(message)
+  ));
+  const chatMessages = [
+    chatGreeting(selectedGroup),
+    ...storedChatMessages,
+  ];
   const quickQuestions = selectedAlert
     ? [
         "這台電腦現在危險嗎？",
@@ -301,10 +339,11 @@ export function AgentRunsDashboard({
   async function askAssetAgent(question: string) {
     const content = question.trim();
     if (!content || !selectedAlert || chatLoading) return;
-    const previousMessages = chatSession.messages.length > 0
-      ? chatSession.messages
-      : [chatGreeting(selectedGroup)];
-    const nextMessages = [...previousMessages, { role: "user" as const, content }];
+    const previousMessages = [
+      chatGreeting(selectedGroup),
+      ...storedChatMessages,
+    ];
+    const nextMessages = [...storedChatMessages, { role: "user" as const, content }];
     saveSession(chatKey, { messages: nextMessages, evidence: chatSession.evidence });
     setChatInput("");
     setChatLoading(true);
@@ -316,7 +355,8 @@ export function AgentRunsDashboard({
       });
       saveSession(chatKey, {
         messages: [
-          ...nextMessages,
+          ...storedChatMessages,
+          { role: "user", content },
           { role: "assistant", content: response.answer_zh },
         ],
         evidence: response.evidence || [],
@@ -326,7 +366,8 @@ export function AgentRunsDashboard({
       const message = error instanceof Error ? error.message : String(error);
       saveSession(chatKey, {
         messages: [
-          ...nextMessages,
+          ...storedChatMessages,
+          { role: "user", content },
           { role: "assistant", content: `我查詢失敗：${message}` },
         ],
         evidence: chatSession.evidence,
@@ -353,7 +394,7 @@ export function AgentRunsDashboard({
   return (
     <div className="space-y-4">
       {!chatOpen && (
-      <div className="flex flex-wrap gap-2 border-b border-border pb-4">
+        <div className="flex flex-wrap gap-2 border-b border-border pb-4">
           {statusItems.map((item) => {
             const Icon = item.icon;
             const content = (
@@ -371,7 +412,7 @@ export function AgentRunsDashboard({
               <span key={item.label}>{content}</span>
             );
           })}
-      </div>
+        </div>
       )}
 
       {chatOpen && selectedGroup && selectedAlert ? (
@@ -407,6 +448,7 @@ export function AgentRunsDashboard({
               <div className="flex-1 space-y-4 overflow-auto px-5 py-5">
                 {chatMessages.map((message, index) => {
                   const user = message.role === "user";
+                  const blocks = chatContentBlocks(message.content);
                   return (
                     <div key={`${message.role}-${index}`} className={cn("flex gap-2", user && "justify-end")}>
                       {!user && (
@@ -416,12 +458,18 @@ export function AgentRunsDashboard({
                       )}
                       <div
                         className={cn(
-                          "whitespace-pre-line rounded-lg px-4 py-3 text-sm leading-7",
+                          "rounded-lg px-4 py-3 text-sm leading-6",
                           user ? "bg-primary text-primary-foreground" : "border bg-muted/30"
                         )}
-                        style={{ maxWidth: user ? "min(560px, 78%)" : "min(820px, 86%)" }}
+                        style={{ maxWidth: user ? "min(520px, 76%)" : "min(760px, 84%)" }}
                       >
-                        {message.content}
+                        <div className="space-y-2">
+                          {blocks.map((block, blockIndex) => (
+                            <p key={blockIndex} className={cn(blockIndex === 0 && !user && "font-medium")}>
+                              {block}
+                            </p>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   );
@@ -487,20 +535,20 @@ export function AgentRunsDashboard({
                 </div>
 
                 <div className="space-y-3 rounded-lg border p-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">來源</span>
-                  <span className="font-medium">{sourceLabel(selectedAlert.siem_source)}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">訊號數</span>
-                  <span className="font-medium">{selectedGroup.alerts.length} 筆</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">最新風險</span>
-                  <Badge variant="outline" className={cn("border", severityClass(selectedAlert.severity))}>
-                    {severityLabels[selectedAlert.severity]}
-                  </Badge>
-                </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">來源</span>
+                    <span className="font-medium">{sourceLabel(selectedAlert.siem_source)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">訊號數</span>
+                    <span className="font-medium">{selectedGroup.alerts.length} 筆</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">最新風險</span>
+                    <Badge variant="outline" className={cn("border", severityClass(selectedAlert.severity))}>
+                      {severityLabels[selectedAlert.severity]}
+                    </Badge>
+                  </div>
                 </div>
                 <div>
                   <div className="text-sm font-medium">Agent 建議</div>
@@ -582,21 +630,16 @@ export function AgentRunsDashboard({
                   return (
                     <div
                       key={group.key}
-                      role="button"
-                      tabIndex={0}
-                      className="grid cursor-pointer gap-4 px-4 py-4 transition hover:bg-muted/30 lg:grid-cols-[minmax(0,1fr)_200px]"
-                      onClick={() => {
-                        setSelectedKey(group.key);
-                        setChatOpen(true);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
+                      className="grid gap-4 px-4 py-4 transition hover:bg-muted/30 lg:grid-cols-[minmax(0,1fr)_200px]"
+                    >
+                      <button
+                        type="button"
+                        className="min-w-0 space-y-2 text-left"
+                        onClick={() => {
                           setSelectedKey(group.key);
                           setChatOpen(true);
-                        }
-                      }}
-                    >
-                      <div className="min-w-0 space-y-2">
+                        }}
+                      >
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant="outline" className={cn("border", runStateClass(alert))}>
                             {primaryAction(alert)}
@@ -623,9 +666,9 @@ export function AgentRunsDashboard({
                           <span className="font-medium text-foreground">Agent 建議：</span>
                           <span className="text-muted-foreground">{bossNextStep(alert)}</span>
                         </div>
-                      </div>
+                      </button>
 
-                      <div className="flex flex-col justify-center gap-2" onClick={(event) => event.stopPropagation()}>
+                      <div className="flex flex-col justify-center gap-2">
                         {alert.status === "pending" ? (
                           <>
                             <Button
