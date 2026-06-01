@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Suspense } from "react";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -6,8 +7,8 @@ import { SidebarNav } from "@/components/dashboard/sidebar-nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EdgeSec-Pi Dashboard | 資安監控中心",
-  description: "中小企業資安告警監控與回應系統 - Wazuh LLM Bridge",
+  title: "EdgeSec-Pi | 資安 Agent Dashboard",
+  description: "把雲端與地端安全訊號轉成老闆看得懂、可決策、可追蹤的 Agent 建議",
 };
 
 export const viewport: Viewport = {
@@ -26,6 +27,7 @@ export default function RootLayout({
     <html
       lang="zh-TW"
       className="h-full antialiased"
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
     >
       <body className="h-full bg-background">
@@ -37,7 +39,9 @@ export default function RootLayout({
         >
           <TooltipProvider>
             <div className="flex h-full">
-              <SidebarNav />
+              <Suspense fallback={null}>
+                <SidebarNav />
+              </Suspense>
               <main className="flex-1 overflow-auto">
                 {children}
               </main>
