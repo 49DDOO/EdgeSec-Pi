@@ -109,6 +109,29 @@ def test_hardening_status_warns_when_recipe_files_are_missing() -> None:
 
 
 @pytest.mark.unit
+def test_hardening_status_skips_until_first_endpoint_is_installed() -> None:
+    wazuh_hardening = fresh_bridge_import(["wazuh_hardening"])["wazuh_hardening"]
+
+    result = wazuh_hardening.evaluate_status(
+        groups=["default", "macos", "linux", "windows"],
+        agents=[
+            {
+                "id": "000",
+                "name": "wazuh.manager",
+                "status": "active",
+                "os": {"platform": "Linux"},
+                "group": [],
+            }
+        ],
+        recipe_files_present=True,
+    )
+
+    assert result["status"] == "skip"
+    assert "尚未安裝" in result["summary_zh"]
+    assert result["agents_checked"] == 0
+
+
+@pytest.mark.unit
 def test_self_test_hardening_check_is_non_required(monkeypatch) -> None:
     modules = fresh_bridge_import(["self_test", "wazuh_hardening"])
     self_test = modules["self_test"]

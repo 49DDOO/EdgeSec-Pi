@@ -118,9 +118,9 @@ def evaluate_status(
         summary = "部分在線端點尚未套用對應 OS 的 Wazuh 強化群組。"
         next_step = "請 IT 重新執行 setup-agent-groups.sh，或在 enroll 時指定 default + OS group。"
     elif not known_agents:
-        status = "warn"
-        summary = "強化群組已建立，但目前沒有可確認套用狀態的在線端點。"
-        next_step = "等第一台端點 online 後，重新整理首次設定狀態。"
+        status = "skip"
+        summary = "尚未安裝可檢查的 Agent 端點。"
+        next_step = "等老闆部署第一台 Agent 後，再確認是否套用對應 OS 群組。"
     else:
         status = "ok"
         summary = "Wazuh agent-groups 強化包已建立，且在線端點有套用對應 OS 群組。"
