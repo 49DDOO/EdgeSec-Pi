@@ -169,6 +169,23 @@ def _format_agent_os(agent: dict[str, Any]) -> str:
     return f"{label} {version}".strip()
 
 
+async def _dashboard_llm_service(stats: dict[str, Any]) -> str:
+    latest_error = float(stats.get("latest_error_received_at_24h") or 0)
+    latest_ok = float(stats.get("latest_ok_received_at_24h") or 0)
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            check = await self_test._check_lm_studio(client)
+    except Exception:
+        return "down"
+    if check.get("status") == "fail":
+        return "down"
+    if check.get("status") == "warn":
+        return "degraded"
+    if latest_error and (not latest_ok or latest_error > latest_ok):
+        return "degraded"
+    return "healthy"
+
+
 def _endpoint_status(status: Any) -> str:
     normalized = str(status or "").strip().lower()
     if normalized in {"active", "online"}:
@@ -541,6 +558,7 @@ async def get_dashboard_summary(request: Request) -> dict[str, Any]:
     )
     queue: Optional[asyncio.Queue] = getattr(request.app.state, "queue", None)
     endpoints, wazuh_connection = await _dashboard_endpoints()
+    llm_service = await _dashboard_llm_service(stats)
     notifications = notification_config()
     cve = status.get("cve_feed") or {}
 
@@ -554,7 +572,7 @@ async def get_dashboard_summary(request: Request) -> dict[str, Any]:
             "analysis_queue": queue.qsize() if queue else 0,
             "cve_database_updated": cve.get("last_update") or datetime.now(timezone.utc).isoformat(),
             "wazuh_connection": wazuh_connection,
-            "llm_service": "degraded" if int(stats.get("errors_last_24h") or 0) else "healthy",
+            "llm_service": llm_service,
         },
         "notifications": notifications,
         "detectionCategories": detection_settings.load(),

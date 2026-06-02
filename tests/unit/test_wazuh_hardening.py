@@ -20,6 +20,13 @@ def test_hardening_status_ok_when_groups_and_agents_match() -> None:
         ],
         agents=[
             {
+                "id": "000",
+                "name": "wazuh.manager",
+                "status": "active",
+                "os": {"platform": "Linux"},
+                "group": [],
+            },
+            {
                 "id": "001",
                 "name": "office-ubuntu",
                 "status": "active",
@@ -112,9 +119,18 @@ def test_self_test_hardening_check_is_non_required(monkeypatch) -> None:
             "status": "warn",
             "summary_zh": "尚未套用。",
             "next_step_zh": "執行 setup-agent-groups.sh。",
-            "groups_present": ["default"],
-            "missing_groups": ["linux", "macos", "windows"],
-            "agents_checked": 0,
+            "groups_present": ["default", "linux", "macos", "windows"],
+            "missing_groups": [],
+            "agents_checked": 1,
+            "agents_missing_group": [
+                {
+                    "id": "003",
+                    "name": "boss-macbook",
+                    "expected_group": "macos",
+                    "groups": ["default"],
+                }
+            ],
+            "recipe_files_present": True,
         }
 
     monkeypatch.setattr(wazuh_hardening, "collect_status", fake_collect_status)
@@ -123,6 +139,8 @@ def test_self_test_hardening_check_is_non_required(monkeypatch) -> None:
     assert check["id"] == "wazuh_hardening"
     assert check["status"] == "warn"
     assert check["required"] is False
+    assert "missing_groups=none" in check["detail_zh"]
+    assert "003:boss-macbook->macos" in check["detail_zh"]
 
 
 @pytest.mark.unit

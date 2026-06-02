@@ -389,43 +389,7 @@ default_smoke_ip() {
 verify_smoke_alert() {
   local smoke_ip="$1"
   local rule_id="${2:-5701}"
-  local timeout_s="${SMOKE_VERIFY_TIMEOUT_S:-180}"
-  local deadline=$((SECONDS + timeout_s))
-  local manager_ok=false
-  local db_row=""
-
-  c_log "verifying smoke alert rule $rule_id for source IP $smoke_ip"
-  while (( SECONDS < deadline )); do
-    if docker exec single-node-wazuh.manager-1 sh -c "grep -F '$smoke_ip' /var/ossec/logs/alerts/alerts.json | grep -q '\"id\":\"$rule_id\"'" >/dev/null 2>&1; then
-      manager_ok=true
-      break
-    fi
-    sleep 2
-  done
-
-  if [[ "$manager_ok" != "true" ]]; then
-    c_err "Wazuh did not emit rule $rule_id for $smoke_ip within ${timeout_s}s"
-    return 1
-  fi
-  c_ok "Wazuh emitted rule $rule_id for $smoke_ip"
-
-  if ! command -v sqlite3 >/dev/null 2>&1; then
-    c_warn "sqlite3 not found; skipping bridge DB smoke verification"
-    return 0
-  fi
-
-  deadline=$((SECONDS + timeout_s))
-  while (( SECONDS < deadline )); do
-    db_row="$(sqlite3 "$BRIDGE_DIR/data/alerts.db" "SELECT id || '|' || llm_status FROM alerts WHERE rule_id='$rule_id' AND raw_alert LIKE '%$smoke_ip%' ORDER BY id DESC LIMIT 1;" 2>/dev/null || true)"
-    if [[ -n "$db_row" ]]; then
-      c_ok "bridge stored smoke alert id/status: $db_row"
-      return 0
-    fi
-    sleep 2
-  done
-
-  c_err "bridge did not store rule $rule_id for $smoke_ip within ${timeout_s}s"
-  return 1
+  "$ROOT/tests/e2e/verify-smoke-alert.sh" "$smoke_ip" "$rule_id"
 }
 
 cmd_smoke() {

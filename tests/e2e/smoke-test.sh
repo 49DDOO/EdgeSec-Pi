@@ -10,11 +10,16 @@
 
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEFAULT_OCTET="$(( ( $(date +%s) + $$ ) % 200 + 20 ))"
 TARGET_IP="${1:-${SMOKE_SOURCE_IP:-203.0.113.$DEFAULT_OCTET}}"
 COUNT="${2:-${SMOKE_ATTEMPTS:-8}}"
 AGENT="${AGENT_CONTAINER:-wazuh-llm-agent}"
 MODE="${SMOKE_MODE:-probe}"
+RULE_ID="${SMOKE_RULE_ID:-5701}"
+if [[ "$MODE" == "bruteforce" && -z "${SMOKE_RULE_ID:-}" ]]; then
+  RULE_ID="5712"
+fi
 
 if ! docker ps --format '{{.Names}}' | grep -q "^${AGENT}$"; then
   echo "✗ container '$AGENT' not running. Run ./setup.sh first." >&2
@@ -57,3 +62,9 @@ cat <<EOF
      https://localhost:443  →  Threat Hunting → Search 'rule.id:5701'
 
 EOF
+
+if [[ "${SMOKE_VERIFY:-0}" == "1" ]]; then
+  echo "→ waiting ${SMOKE_SETTLE_S:-10}s before verification"
+  sleep "${SMOKE_SETTLE_S:-10}"
+  "$ROOT/tests/e2e/verify-smoke-alert.sh" "$TARGET_IP" "$RULE_ID"
+fi

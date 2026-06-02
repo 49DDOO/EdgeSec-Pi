@@ -52,6 +52,21 @@ def _check(
     }
 
 
+def _format_epoch(value: Any) -> str:
+    if not value:
+        return "none"
+    try:
+        return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return str(value)
+
+
+def _has_recovered_after_alert_errors(stats: dict[str, Any]) -> bool:
+    latest_error = float(stats.get("latest_error_received_at_24h") or 0)
+    latest_ok = float(stats.get("latest_ok_received_at_24h") or 0)
+    return bool(latest_error and latest_ok >= latest_error)
+
+
 async def _check_lm_studio(client: httpx.AsyncClient) -> dict[str, Any]:
     url = _models_url()
     model = os.getenv("LM_MODEL", "local-model")
@@ -204,6 +219,21 @@ async def _check_mcp(client: httpx.AsyncClient) -> dict[str, Any]:
 
 async def _check_wazuh_hardening() -> dict[str, Any]:
     result = await wazuh_hardening.collect_status()
+    agents_missing = result.get("agents_missing_group") or []
+    missing_agents_detail = ""
+    if isinstance(agents_missing, list) and agents_missing:
+        rendered = []
+        for agent in agents_missing[:5]:
+            if not isinstance(agent, dict):
+                continue
+            groups = ",".join(agent.get("groups") or []) or "none"
+            rendered.append(
+                f"{agent.get('id') or '?'}:{agent.get('name') or '?'}"
+                f"->{agent.get('expected_group') or '?'}(has={groups})"
+            )
+        if rendered:
+            suffix = f"; +{len(agents_missing) - 5}" if len(agents_missing) > 5 else ""
+            missing_agents_detail = f"; agents_missing={'; '.join(rendered)}{suffix}"
     return _check(
         "wazuh_hardening",
         "偵測強化",
@@ -211,9 +241,11 @@ async def _check_wazuh_hardening() -> dict[str, Any]:
         str(result.get("summary_zh") or "無法確認 Wazuh 偵測強化狀態。"),
         str(result.get("next_step_zh") or ""),
         detail_zh=(
-            f"groups={','.join(result.get('groups_present') or [])}; "
-            f"missing={','.join(result.get('missing_groups') or [])}; "
+            f"groups={','.join(result.get('groups_present') or []) or 'none'}; "
+            f"missing_groups={','.join(result.get('missing_groups') or []) or 'none'}; "
             f"agents_checked={result.get('agents_checked', 0)}; "
+            f"recipe_files={'yes' if result.get('recipe_files_present') else 'no'}"
+            f"{missing_agents_detail}; "
             "scope=此檢查確認 agent-groups 是否部署與套用；已套用群組不等於每個偵測模組都在產生事件。"
         ),
         owner_zh="IT",
@@ -315,6 +347,12 @@ async def _check_alert_flow() -> dict[str, Any]:
     total = int(stats.get("total_alerts") or 0)
     last_24h = int(stats.get("alerts_last_24h") or 0)
     errors = int(stats.get("errors_last_24h") or 0)
+    latest_ok = stats.get("latest_ok_received_at_24h")
+    latest_error = stats.get("latest_error_received_at_24h")
+    detail = (
+        f"24h alerts={last_24h}, errors={errors}, "
+        f"latest_ok={_format_epoch(latest_ok)}, latest_error={_format_epoch(latest_error)}"
+    )
 
     if total == 0:
         return _check(
@@ -325,21 +363,29 @@ async def _check_alert_flow() -> dict[str, Any]:
             "若系統剛安裝，這可能正常；否則請 IT 確認 Wazuh webhook 是否有接到 EdgeSec-Pi。",
             detail_zh="total_alerts=0",
         )
-    if errors > 0:
+    if errors > 0 and not _has_recovered_after_alert_errors(stats):
         return _check(
             "alert_flow",
             "告警資料",
             "warn",
-            "最近 24 小時有告警分析失敗。",
+            "最近 24 小時有告警分析失敗，且尚未看到後續成功分析。",
             "請技術窗口檢查 AI 分析、進階查詢或通知連線紀錄。",
-            detail_zh=f"24h alerts={last_24h}, errors={errors}",
+            detail_zh=detail,
+        )
+    if errors > 0:
+        return _check(
+            "alert_flow",
+            "告警資料",
+            "ok",
+            "EdgeSec-Pi 已收到並保存告警資料；最近一次分析已成功。",
+            detail_zh=detail,
         )
     return _check(
         "alert_flow",
         "告警資料",
         "ok",
         "EdgeSec-Pi 已收到並保存告警資料。",
-        detail_zh=f"total={total}, 24h={last_24h}",
+        detail_zh=f"total={total}, 24h={last_24h}, latest_ok={_format_epoch(latest_ok)}",
     )
 
 

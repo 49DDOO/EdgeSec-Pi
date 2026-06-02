@@ -801,10 +801,26 @@ def _compute_stats_sync() -> dict[str, Any]:
             "AND llm_status = 'error'"
         ).fetchone()[0]
 
+        latest_ok_24h = conn.execute(
+            "SELECT MAX(received_at) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
+            "AND llm_status = 'ok'"
+        ).fetchone()[0]
+
+        latest_error_24h = conn.execute(
+            "SELECT MAX(received_at) FROM alerts WHERE "
+            f"{_NOT_SAMPLEDATA_SQL} "
+            "AND received_at > strftime('%s','now') - 86400 "
+            "AND llm_status = 'error'"
+        ).fetchone()[0]
+
     return {
         "total_alerts":        total,
         "alerts_last_24h":     last_24h,
         "errors_last_24h":     errors_24h,
+        "latest_ok_received_at_24h": latest_ok_24h,
+        "latest_error_received_at_24h": latest_error_24h,
         "by_severity_24h":     by_severity_24h,
         "open_by_severity_24h": open_by_severity_24h,
         "open_cases_24h":      open_cases_24h,

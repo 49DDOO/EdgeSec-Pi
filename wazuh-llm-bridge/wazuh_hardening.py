@@ -76,6 +76,10 @@ def active_agents_with_known_os(agents: list[dict[str, Any]]) -> list[dict[str, 
         status = str(agent.get("status") or "").lower()
         if status not in {"active", "online"}:
             continue
+        agent_id = str(agent.get("id") or "").strip()
+        agent_name = str(agent.get("name") or "").strip().lower()
+        if agent_id == "000" or agent_name in {"wazuh.manager", "wazuh-manager"}:
+            continue
         if expected_group_for_agent(agent):
             known.append(agent)
     return known

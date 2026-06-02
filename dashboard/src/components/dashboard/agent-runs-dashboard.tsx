@@ -203,6 +203,12 @@ function assetKey(alert: Alert) {
   return alert.agent_id || alert.agent_name || alert.agent_ip || alert.id;
 }
 
+function chatSessionKey(group: AgentRunGroup | undefined) {
+  const alert = group?.primary;
+  if (!alert || !group) return "";
+  return `agent-run:${assetKey(alert)}:${group.key}`;
+}
+
 function chatGreeting(group: AgentRunGroup | undefined): InvestigationMessage {
   const alert = group?.primary;
   if (!alert) {
@@ -283,7 +289,7 @@ export function AgentRunsDashboard({
     [runs, selectedKey]
   );
   const selectedAlert = selectedGroup?.primary;
-  const chatKey = selectedAlert ? `asset:${assetKey(selectedAlert)}` : "";
+  const chatKey = chatSessionKey(selectedGroup);
   const chatSession = getSession(chatKey);
   const storedChatMessages = chatSession.messages.filter((message, index) => (
     index !== 0 || !isStoredChatGreeting(message)
