@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     environment:
       - WAZUH_MANAGER=wazuh.manager
+    volumes:
+      - wazuh-agent-etc:/var/ossec/etc
     networks:
       - wazuh-net
 
@@ -15,3 +17,6 @@ networks:
   wazuh-net:
     external: true
     name: single-node_default
+
+volumes:
+  wazuh-agent-etc:

@@ -16,30 +16,37 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-import admin_auth
 import ai_settings
+import dashboard_notifications_api
+import dashboard_sample_data_api
+import dashboard_sources_api
+import dashboard_wazuh_settings_api
 import db
 import detection_settings
 import digest
 import investigation_chat
 import llm_client
-import notification_settings
 import org_profile
-import sample_data
 import self_test
-import siem
-import slack_render
 import technical_evidence
 import wazuh
+from dashboard_notifications_api import (
+    notification_config,
+    notification_service_check,
+    notifications_payload,
+)
 
 router = APIRouter(tags=["ops"])
+router.include_router(dashboard_notifications_api.router)
+router.include_router(dashboard_sample_data_api.router)
+router.include_router(dashboard_sources_api.router)
+router.include_router(dashboard_wazuh_settings_api.router)
 
 QUEUE_MAXSIZE = int(os.getenv("QUEUE_MAXSIZE", "1000"))
 WORKER_COUNT = int(os.getenv("WORKER_COUNT", "2"))
-SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip() or None
 
 
 class AlertCasePatch(BaseModel):
@@ -56,12 +63,9 @@ class EndpointBusinessPatch(BaseModel):
     notes: str = ""
 
 
-class NotificationSettingsPatch(BaseModel):
-    values: dict[str, Any] = {}
-
-
 class DetectionSettingsPatch(BaseModel):
     enabled: dict[str, bool] = {}
+    preset: Optional[str] = None
 
 
 class AiSettingsPatch(BaseModel):
@@ -85,12 +89,6 @@ class AiModelListRequest(BaseModel):
     api_key: Optional[str] = None
 
 
-class SampleReplayRequest(BaseModel):
-    category: str = "security"
-    limit: int = 3
-    min_level: int = 7
-
-
 class InvestigationChatMessage(BaseModel):
     role: str
     content: str
@@ -98,48 +96,8 @@ class InvestigationChatMessage(BaseModel):
 
 class InvestigationChatRequest(BaseModel):
     messages: list[InvestigationChatMessage]
-
-
-def _built_in_test_alert() -> dict[str, Any]:
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "timestamp": now,
-        "@timestamp": now,
-        "@sampledata": True,
-        "rule": {
-            "id": "edgesec-test-001",
-            "level": 10,
-            "description": "EdgeSec-Pi built-in notification flow test",
-            "groups": ["edgesec", "test"],
-        },
-        "agent": {
-            "id": "edgesec-test",
-            "name": "EdgeSec-Pi 測試電腦",
-            "ip": "192.0.2.10",
-        },
-        "data": {
-            "srcip": "203.0.113.10",
-            "dstuser": "demo-admin",
-            "test": True,
-        },
-        "full_log": (
-            "EdgeSec-Pi built-in test alert: simulated repeated login attempt "
-            "from 203.0.113.10 to demo-admin on EdgeSec-Pi 測試電腦."
-        ),
-        "_edgesec": {
-            "sampledata": True,
-            "built_in_test": True,
-            "sample_source": "edgesec_builtin",
-            "sample_replayed_at": now,
-            "business_context": {
-                "role": "通知測試",
-                "owner": "管理者",
-                "criticality": "medium",
-                "business_hours": "24/7",
-                "notes": "這是 EdgeSec-Pi 內建測試告警，不代表公司真的被攻擊。",
-            },
-        },
-    }
+    alert_id: Optional[int] = None
+    question: Optional[str] = None
 
 
 def _parse_llm_raw(raw: Any) -> dict[str, Any]:
@@ -211,6 +169,23 @@ def _format_agent_os(agent: dict[str, Any]) -> str:
     return f"{label} {version}".strip()
 
 
+async def _dashboard_llm_service(stats: dict[str, Any]) -> str:
+    latest_error = float(stats.get("latest_error_received_at_24h") or 0)
+    latest_ok = float(stats.get("latest_ok_received_at_24h") or 0)
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            check = await self_test._check_lm_studio(client)
+    except Exception:
+        return "down"
+    if check.get("status") == "fail":
+        return "down"
+    if check.get("status") == "warn":
+        return "degraded"
+    if latest_error and (not latest_ok or latest_error > latest_ok):
+        return "degraded"
+    return "healthy"
+
+
 def _endpoint_status(status: Any) -> str:
     normalized = str(status or "").strip().lower()
     if normalized in {"active", "online"}:
@@ -240,165 +215,6 @@ def _format_endpoint_ip(value: Any) -> tuple[str, str, bool]:
     if ip.is_loopback:
         return "未回報實際 IP", raw, True
     return str(ip), raw, False
-
-
-def _notification_config() -> dict[str, bool]:
-    values = notification_settings.values()
-    return {
-        "line": bool(values.get("line_channel_token") and values.get("line_user_id")),
-        "slack": bool(values.get("slack_webhook") or (
-            values.get("slack_bot") and values.get("slack_app") and values.get("slack_channel")
-        )),
-        "telegram": bool(values.get("telegram_bot_token") and values.get("telegram_chat_id")),
-        "email": bool(values.get("smtp_host") and values.get("email_from") and values.get("email_to")),
-    }
-
-
-def _configured_channels(values: dict[str, Any]) -> dict[str, bool]:
-    return {
-        "line": bool(values.get("line_channel_token") and values.get("line_user_id")),
-        "slack": bool(values.get("slack_webhook") or (
-            values.get("slack_bot") and values.get("slack_app") and values.get("slack_channel")
-        )),
-        "telegram": bool(values.get("telegram_bot_token") and values.get("telegram_chat_id")),
-        "email": bool(values.get("smtp_host") and values.get("email_from") and values.get("email_to")),
-    }
-
-
-def _notification_channel_status(channel: str, values: dict[str, Any]) -> dict[str, Any]:
-    configured = _configured_channels(values).get(channel, False)
-    tested_at = str(values.get(f"{channel}_tested_at") or "")
-    field_map: dict[str, dict[str, Any]] = {
-        "line": {
-            "LINE_CHANNEL_ACCESS_TOKEN": {
-                "label": "LINE 權杖",
-                "secret": True,
-                "configured": bool(values.get("line_channel_token")),
-            },
-            "LINE_USER_ID": {
-                "label": "接收 LINE 的人",
-                "value": values.get("line_user_id") or "",
-            },
-        },
-        "slack": {
-            "SLACK_WEBHOOK_URL": {
-                "label": "Webhook URL",
-                "secret": True,
-                "configured": bool(values.get("slack_webhook")),
-            },
-            "SLACK_CHANNEL_ID": {
-                "label": "Channel ID",
-                "value": values.get("slack_channel") or "",
-            },
-            "SLACK_BOT_TOKEN": {
-                "label": "Bot Token",
-                "secret": True,
-                "configured": bool(values.get("slack_bot")),
-            },
-            "SLACK_APP_TOKEN": {
-                "label": "App Token",
-                "secret": True,
-                "configured": bool(values.get("slack_app")),
-            },
-            "BRIDGE_PUBLIC_URL": {
-                "label": "公開連結",
-                "value": values.get("bridge_public_url") or "",
-            },
-        },
-        "telegram": {
-            "TELEGRAM_BOT_TOKEN": {
-                "label": "Bot Token",
-                "secret": True,
-                "configured": bool(values.get("telegram_bot_token")),
-            },
-            "TELEGRAM_CHAT_ID": {
-                "label": "Chat ID",
-                "value": values.get("telegram_chat_id") or "",
-            },
-        },
-        "email": {
-            "SMTP_HOST": {"label": "SMTP 主機", "value": values.get("smtp_host") or ""},
-            "SMTP_PORT": {"label": "SMTP Port", "value": values.get("smtp_port") or "587"},
-            "SMTP_USER": {"label": "SMTP 帳號", "value": values.get("smtp_user") or ""},
-            "SMTP_PASS": {
-                "label": "SMTP 密碼",
-                "secret": True,
-                "configured": bool(notification_settings.get_value("SMTP_PASS")),
-            },
-            "EMAIL_FROM": {"label": "寄件者", "value": values.get("email_from") or ""},
-            "EMAIL_TO": {"label": "收件者", "value": values.get("email_to") or ""},
-            "SMTP_SSL": {"label": "SSL", "value": bool(values.get("smtp_ssl"))},
-            "SMTP_STARTTLS": {"label": "STARTTLS", "value": bool(values.get("smtp_starttls"))},
-        },
-    }
-    return {
-        "channel": channel,
-        "configured": configured,
-        "enabled": configured,
-        "lastTested": tested_at or None,
-        "fields": field_map.get(channel, {}),
-    }
-
-
-def _notifications_payload() -> dict[str, Any]:
-    values = notification_settings.values()
-    return {
-        "channels": {
-            channel: _notification_channel_status(channel, values)
-            for channel in ("line", "slack", "telegram", "email")
-        }
-    }
-
-
-def _notification_service_check() -> dict[str, Any]:
-    channels = _notifications_payload()["channels"]
-    configured = [
-        str(channel.get("channel") or "").upper()
-        for channel in channels.values()
-        if channel.get("configured")
-    ]
-    tested = [
-        str(channel.get("channel") or "").upper()
-        for channel in channels.values()
-        if channel.get("lastTested")
-    ]
-    status = "ok" if tested else "warn" if configured else "fail"
-    summary = (
-        f"已測通 {', '.join(tested)}。"
-        if tested
-        else f"已設定 {', '.join(configured)}，但尚未測試成功。"
-        if configured
-        else "尚未設定任何通知管道。"
-    )
-    next_step = (
-        "至少測通 LINE、Slack、Telegram 或 Email 其中一個，收到告警才不需要一直盯著 Dashboard。"
-        if status != "ok"
-        else ""
-    )
-    return {
-        "id": "notifications",
-        "label_zh": "通知管道",
-        "status": status,
-        "summary_zh": summary,
-        "next_step_zh": next_step,
-        "detail_zh": f"configured={len(configured)}/4, tested={len(tested)}/4",
-        "owner_zh": "管理者",
-        "required": True,
-    }
-
-
-def _clean_notification_form(channel: str, values: dict[str, Any]) -> dict[str, str]:
-    allowed = set(notification_settings.CHANNEL_KEYS.get(channel, []))
-    form: dict[str, str] = {}
-    for key, value in values.items():
-        if key not in allowed and key not in {"SMTP_SSL", "SMTP_STARTTLS"}:
-            continue
-        if key in {"SMTP_SSL", "SMTP_STARTTLS"}:
-            if bool(value):
-                form[key] = "true"
-            continue
-        form[key] = str(value or "").strip()
-    return form
 
 
 def _risk_summary(stats: dict[str, Any]) -> dict[str, Any]:
@@ -498,9 +314,10 @@ def _alert_to_dashboard(row: dict[str, Any]) -> dict[str, Any]:
     if isinstance(iocs, str):
         iocs = [iocs]
     fallback = _management_fallback(row, raw_alert)
-    llm_summary = raw_llm.get("summary_zh")
-    llm_impact = raw_llm.get("impact_zh")
-    llm_action = raw_llm.get("next_step_zh")
+    # 優先用已落地的結構化欄位；舊資料沒有欄位時再回退解析 llm_raw_reply。
+    llm_summary = row.get("llm_summary_zh") or raw_llm.get("summary_zh")
+    llm_impact = row.get("llm_impact_zh") or raw_llm.get("impact_zh")
+    llm_action = row.get("llm_next_step_zh") or raw_llm.get("next_step_zh")
     summary = llm_summary if _has_cjk(llm_summary) else fallback["summary"]
     impact = llm_impact if _has_cjk(llm_impact) else fallback["impact"]
     action = llm_action if _has_cjk(llm_action) else fallback["next_step"]
@@ -525,6 +342,7 @@ def _alert_to_dashboard(row: dict[str, Any]) -> dict[str, Any]:
         "summary": str(summary),
         "business_impact": str(impact),
         "recommended_action": str(action),
+        "investigation_summary_zh": str(row.get("llm_investigation_zh") or raw_llm.get("investigation_summary_zh") or ""),
         "status": _case_to_dashboard_status(row.get("case_status")),
         "purpose": str(raw_llm.get("business_context") or ""),
         "mitre": str(row.get("llm_mitre") or ""),
@@ -656,7 +474,7 @@ async def get_dashboard_service_status(request: Request) -> dict[str, Any]:
         queue_max=QUEUE_MAXSIZE,
     )
     checks = list(self_status.get("checks") or [])
-    checks.append(_notification_service_check())
+    checks.append(notification_service_check())
 
     required_fail = [c for c in checks if c.get("required") and c.get("status") == "fail"]
     warnings = [c for c in checks if c.get("status") == "warn"]
@@ -682,7 +500,7 @@ async def get_dashboard_service_status(request: Request) -> dict[str, Any]:
             "next_step_zh": "維持監控即可。",
         }
 
-    channels = _notifications_payload()["channels"]
+    channels = notifications_payload()["channels"]
     return {
         **overall,
         "checked_at": datetime.now(timezone.utc).isoformat(),
@@ -701,9 +519,15 @@ async def get_dashboard_service_status(request: Request) -> dict[str, Any]:
 @router.post("/api/dashboard/investigation/chat")
 async def investigation_chat_reply(payload: InvestigationChatRequest) -> dict[str, Any]:
     try:
-        result = await investigation_chat.answer(
-            [message.dict() for message in payload.messages]
-        )
+        messages = [message.dict() for message in payload.messages]
+        if payload.alert_id is not None:
+            result = await investigation_chat.answer_for_alert(
+                payload.alert_id,
+                payload.question or "",
+                history=messages,
+            )
+        else:
+            result = await investigation_chat.answer(messages)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
@@ -734,7 +558,8 @@ async def get_dashboard_summary(request: Request) -> dict[str, Any]:
     )
     queue: Optional[asyncio.Queue] = getattr(request.app.state, "queue", None)
     endpoints, wazuh_connection = await _dashboard_endpoints()
-    notifications = _notification_config()
+    llm_service = await _dashboard_llm_service(stats)
+    notifications = notification_config()
     cve = status.get("cve_feed") or {}
 
     return {
@@ -747,7 +572,7 @@ async def get_dashboard_summary(request: Request) -> dict[str, Any]:
             "analysis_queue": queue.qsize() if queue else 0,
             "cve_database_updated": cve.get("last_update") or datetime.now(timezone.utc).isoformat(),
             "wazuh_connection": wazuh_connection,
-            "llm_service": "degraded" if int(stats.get("errors_last_24h") or 0) else "healthy",
+            "llm_service": llm_service,
         },
         "notifications": notifications,
         "detectionCategories": detection_settings.load(),
@@ -772,6 +597,27 @@ async def patch_dashboard_alert_case(alert_id: int, payload: AlertCasePatch) -> 
     if not updated:
         raise HTTPException(status_code=404, detail="alert not found")
     return {"ok": True, "id": alert_id, "status": _case_to_dashboard_status(status)}
+
+
+@router.get("/api/dashboard/false-positive-suppressions")
+async def list_dashboard_false_positive_suppressions(
+    include_expired: bool = False,
+) -> dict[str, Any]:
+    """Expose active bridge-level false-positive feedback rules for audit."""
+    return {
+        "suppressions": await db.list_false_positive_suppressions(
+            include_expired=include_expired
+        )
+    }
+
+
+@router.delete("/api/dashboard/false-positive-suppressions/{suppression_id}")
+async def delete_dashboard_false_positive_suppression(suppression_id: int) -> dict[str, Any]:
+    """Disable a bridge-level false-positive feedback rule."""
+    disabled = await db.disable_false_positive_suppression(suppression_id)
+    if not disabled:
+        raise HTTPException(status_code=404, detail="suppression not found")
+    return {"ok": True, "id": suppression_id, "enabled": False}
 
 
 @router.get("/api/dashboard/endpoints")
@@ -847,11 +693,6 @@ async def put_endpoint_business_context(
     return {"ok": True, "agent": agent_name, "asset": asset}
 
 
-@router.get("/api/dashboard/notifications")
-async def get_dashboard_notifications() -> dict[str, Any]:
-    return _notifications_payload()
-
-
 @router.get("/api/dashboard/detection-categories")
 async def get_dashboard_detection_categories() -> dict[str, Any]:
     return detection_settings.load()
@@ -860,7 +701,7 @@ async def get_dashboard_detection_categories() -> dict[str, Any]:
 @router.put("/api/dashboard/detection-categories")
 async def put_dashboard_detection_categories(payload: DetectionSettingsPatch) -> dict[str, Any]:
     try:
-        return detection_settings.save(payload.enabled)
+        return detection_settings.save(payload.enabled, preset=payload.preset or "custom")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -914,121 +755,6 @@ async def post_dashboard_ai_settings_models(payload: AiModelListRequest) -> dict
     return {"models": models, "message": f"找到 {len(models)} 個模型"}
 
 
-@router.put("/api/dashboard/notifications/{channel}")
-async def put_dashboard_notification_settings(
-    channel: str,
-    payload: NotificationSettingsPatch,
-) -> dict[str, Any]:
-    channel = channel.strip().lower()
-    if channel not in notification_settings.CHANNEL_KEYS:
-        raise HTTPException(status_code=404, detail="unknown notification channel")
-    message = notification_settings.save(_clean_notification_form(channel, payload.values), channel)
-    if "尚未儲存" in message:
-        raise HTTPException(status_code=400, detail=message)
-    result = _notifications_payload()
-    result["message"] = message
-    return result
-
-
-@router.post("/api/dashboard/notifications/{channel}/test")
-async def post_dashboard_notification_test(channel: str) -> dict[str, Any]:
-    channel = channel.strip().lower()
-    if channel not in notification_settings.CHANNEL_KEYS:
-        raise HTTPException(status_code=404, detail="unknown notification channel")
-    try:
-        message = await notification_settings.test_channel(channel)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    result = _notifications_payload()
-    result["message"] = message
-    return result
-
-
-@router.get("/api/dashboard/sample-data/status")
-async def get_dashboard_sample_data_status(category: str = "security") -> dict[str, Any]:
-    """Tell the Dashboard whether Wazuh Sample Data is loaded.
-
-    This checks Wazuh Indexer only for documents carrying `@sampledata: true`.
-    A missing sample index is not an application failure; it means the user has
-    not clicked Wazuh Dashboard's "Add data" button yet.
-    """
-    try:
-        return await sample_data.sample_status(category=category)
-    except sample_data.SampleDataError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Wazuh Indexer sample data query failed: {exc}")
-
-
-@router.post("/api/dashboard/sample-data/replay")
-async def post_dashboard_sample_data_replay(
-    request: Request,
-    payload: SampleReplayRequest,
-) -> dict[str, Any]:
-    """Queue a small batch of Wazuh Sample Data through the real pipeline."""
-    queue: Optional[asyncio.Queue] = getattr(request.app.state, "queue", None)
-    if queue is None:
-        raise HTTPException(status_code=503, detail="queue not initialized")
-
-    try:
-        alerts = await sample_data.load_sample_alerts(
-            category=payload.category,
-            limit=payload.limit,
-            min_level=payload.min_level,
-        )
-    except sample_data.SampleDataError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Wazuh Indexer sample data query failed: {exc}")
-
-    if not alerts:
-        raise HTTPException(
-            status_code=404,
-            detail="No Wazuh sample alerts found. Add Sample Data in Wazuh Dashboard first.",
-        )
-
-    queued = 0
-    for alert in alerts:
-        if alert.get("@sampledata") is not True:
-            continue
-        try:
-            normalized = siem.normalize_alert(alert, source_hint="wazuh")
-            queue.put_nowait(normalized)
-            queued += 1
-        except asyncio.QueueFull:
-            raise HTTPException(status_code=503, detail=f"queue full after queuing {queued} sample alerts")
-
-    return {
-        "queued": queued,
-        "queue_size": queue.qsize(),
-        "sampledata": True,
-        "category": payload.category,
-        "message": f"已送出 {queued} 筆 Wazuh 測試告警；通知內容會標示為測試資料。",
-    }
-
-
-@router.post("/api/dashboard/test-alert/replay")
-async def post_dashboard_builtin_test_alert(request: Request) -> dict[str, Any]:
-    """Queue one built-in test alert without requiring Wazuh Sample Data."""
-    queue: Optional[asyncio.Queue] = getattr(request.app.state, "queue", None)
-    if queue is None:
-        raise HTTPException(status_code=503, detail="queue not initialized")
-
-    try:
-        normalized = siem.normalize_alert(_built_in_test_alert(), source_hint="wazuh")
-        queue.put_nowait(normalized)
-    except asyncio.QueueFull:
-        raise HTTPException(status_code=503, detail="queue full")
-
-    return {
-        "queued": 1,
-        "queue_size": queue.qsize(),
-        "sampledata": True,
-        "category": "edgesec_builtin",
-        "message": "已送出 1 筆 EdgeSec-Pi 內建測試告警；通知內容會標示為測試資料。",
-    }
-
-
 @router.get("/self-test")
 async def get_self_test(request: Request) -> dict[str, Any]:
     """Management-facing readiness check."""
@@ -1036,47 +762,3 @@ async def get_self_test(request: Request) -> dict[str, Any]:
     queue_size = queue.qsize() if queue else 0
     queue_max = getattr(queue, "maxsize", 0) or 0
     return await self_test.run_self_test(queue_size=queue_size, queue_max=queue_max)
-
-
-@router.post("/test-slack")
-async def test_slack(_: str = Depends(admin_auth.check_admin)) -> dict[str, Any]:
-    """Send a canned Slack alert. Admin-only because it pushes notifications."""
-    if not SLACK_WEBHOOK_URL:
-        raise HTTPException(
-            status_code=400,
-            detail="SLACK_WEBHOOK_URL is not set in env. Restart the bridge with it set.",
-        )
-    fake_alert = {
-        "rule": {
-            "id": "5712",
-            "level": 10,
-            "description": "sshd: brute force trying to get access to the system. Non existent user.",
-        },
-        "agent": {"id": "001", "name": "wazuh-agent-01", "ip": "172.18.0.5"},
-        "full_log": (
-            "May 10 17:05:00 wazuh-agent-01 sshd[1234]: Failed password for invalid "
-            "user admin from 192.0.2.111 port 55501 ssh2"
-        ),
-    }
-    fake_parsed = {
-        "severity": "high",
-        "summary_zh": "有人從外部 IP（192.0.2.111）不斷用「admin」這個帳號嘗試登入你的伺服器，已連續失敗 8 次以上。",
-        "impact_zh": "若對方繼續猜下去成功登入，可能會進入系統竊取或破壞資料、安裝後門程式。",
-        "next_step_zh": "請聯絡 IT 把 192.0.2.111 這個 IP 暫時封鎖，並確認沒有任何人不小心成功登入。",
-        "root_cause": "SSH brute-force from external IP targeting non-existent user 'admin'.",
-        "iocs": ["192.0.2.111", "admin"],
-        "action": (
-            "Block 192.0.2.111 at the firewall; verify no successful auths "
-            "from that IP in the last 24h; consider disabling SSH password auth in favour of keys."
-        ),
-        "mitre": "T1110",
-    }
-    async with httpx.AsyncClient() as client:
-        await slack_render.send_to_slack(fake_alert, fake_parsed, client)
-    return {"sent": True, "webhook": SLACK_WEBHOOK_URL[:40] + "..."}
-
-
-@router.post("/test-digest")
-async def test_digest(_: str = Depends(admin_auth.check_admin)) -> dict[str, Any]:
-    """Send the freshness digest immediately. Admin-only notification action."""
-    return await digest.send_digest(SLACK_WEBHOOK_URL)

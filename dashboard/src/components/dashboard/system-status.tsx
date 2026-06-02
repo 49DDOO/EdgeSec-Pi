@@ -90,7 +90,7 @@ export function SystemStatus({ health, notifications, onNotificationChange }: Sy
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Link2 className="size-5 text-muted-foreground" />
-              <span>Wazuh 連線</span>
+              <span>先鋒來源連線</span>
             </div>
             {getConnectionStatusBadge(health.wazuh_connection)}
           </div>
@@ -127,7 +127,7 @@ export function SystemStatus({ health, notifications, onNotificationChange }: Sy
             <Bell className="size-5" />
             通知設定
           </CardTitle>
-          <CardDescription>告警通知管道設定</CardDescription>
+          <CardDescription>事件通知管道設定</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">

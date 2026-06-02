@@ -5,6 +5,8 @@ import type {
   AiModelListResult,
   AiSettings,
   AiSettingsTestResult,
+  DataSourcesResponse,
+  DataSourceTestResult,
   DetectionCategorySettings,
   Endpoint,
   EndpointBusinessContext,
@@ -14,6 +16,8 @@ import type {
   RiskSummary,
   ServiceStatusResponse,
   SystemHealth,
+  WazuhConnectionTestResult,
+  WazuhSettings,
 } from "@/lib/types";
 
 export interface DashboardSummary {
@@ -130,18 +134,19 @@ export async function fetchDetectionCategorySettings(): Promise<DetectionCategor
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`讀取偵測類別設定失敗：${await readError(response)}`);
+    throw new Error(`讀取 Wazuh 訊號類別設定失敗：${await readError(response)}`);
   }
   return (await response.json()) as DetectionCategorySettings;
 }
 
 export async function saveDetectionCategorySettings(
-  enabled: DetectionCategorySettings["enabled"]
+  enabled: DetectionCategorySettings["enabled"],
+  preset?: DetectionCategorySettings["active_preset"]
 ): Promise<DetectionCategorySettings> {
   const response = await fetch(apiUrl("/api/dashboard/detection-categories"), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ enabled, preset }),
   });
   if (!response.ok) {
     throw new Error(await readError(response));
@@ -211,6 +216,74 @@ export async function fetchAiModels(values: {
   return (await response.json()) as AiModelListResult;
 }
 
+export async function fetchWazuhSettings(): Promise<WazuhSettings> {
+  const response = await fetch(apiUrl("/api/dashboard/wazuh-settings"), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`讀取 Wazuh 連線設定失敗：${await readError(response)}`);
+  }
+  return (await response.json()) as WazuhSettings;
+}
+
+export async function saveWazuhSettings(
+  values: Partial<WazuhSettings> & {
+    clear_WAZUH_API_PASS?: boolean;
+    clear_WAZUH_INDEXER_PASS?: boolean;
+    clear_WEBHOOK_SECRET?: boolean;
+  }
+): Promise<WazuhSettings> {
+  const response = await fetch(apiUrl("/api/dashboard/wazuh-settings"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(values),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as WazuhSettings;
+}
+
+export async function testWazuhManager(): Promise<WazuhConnectionTestResult> {
+  const response = await fetch(apiUrl("/api/dashboard/wazuh-settings/test-manager"), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as WazuhConnectionTestResult;
+}
+
+export async function testWazuhIndexer(): Promise<WazuhConnectionTestResult> {
+  const response = await fetch(apiUrl("/api/dashboard/wazuh-settings/test-indexer"), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as WazuhConnectionTestResult;
+}
+
+export async function fetchDataSources(): Promise<DataSourcesResponse> {
+  const response = await fetch(apiUrl("/api/dashboard/sources"), {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`讀取資料來源失敗：${await readError(response)}`);
+  }
+  return (await response.json()) as DataSourcesResponse;
+}
+
+export async function testDataSource(source: string): Promise<DataSourceTestResult> {
+  const response = await fetch(apiUrl(`/api/dashboard/sources/${encodeURIComponent(source)}/test`), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as DataSourceTestResult;
+}
+
 export async function saveNotificationSettings(
   channel: NotificationChannelStatus["channel"],
   values: Record<string, string | boolean>
@@ -238,6 +311,26 @@ export async function testNotificationChannel(
   return (await response.json()) as NotificationSettingsResponse;
 }
 
+export async function sendSlackAiBridgeTest(): Promise<{ sent: boolean; message: string }> {
+  const response = await fetch(apiUrl("/api/dashboard/notifications/slack/ai-bridge-test"), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as { sent: boolean; message: string };
+}
+
+export async function sendSlackDigestTest(): Promise<{ sent: boolean; message: string }> {
+  const response = await fetch(apiUrl("/api/dashboard/notifications/slack/digest-test"), {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as { sent: boolean; message: string };
+}
+
 export async function fetchSampleDataStatus(category = "security"): Promise<SampleDataStatus> {
   const response = await fetch(apiUrl(`/api/dashboard/sample-data/status?category=${encodeURIComponent(category)}`), {
     cache: "no-store",
@@ -263,7 +356,7 @@ export async function replaySampleData(options?: {
     }),
   });
   if (!response.ok) {
-    throw new Error(`送出測試告警失敗：${await readError(response)}`);
+    throw new Error(`送出測試事件失敗：${await readError(response)}`);
   }
   return (await response.json()) as SampleDataReplayResult;
 }
@@ -273,7 +366,7 @@ export async function replayBuiltInTestAlert(): Promise<SampleDataReplayResult> 
     method: "POST",
   });
   if (!response.ok) {
-    throw new Error(`送出內建測試告警失敗：${await readError(response)}`);
+    throw new Error(`送出內建測試事件失敗：${await readError(response)}`);
   }
   return (await response.json()) as SampleDataReplayResult;
 }
@@ -323,6 +416,26 @@ export async function sendInvestigationMessage(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ messages }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as InvestigationChatResponse;
+}
+
+export async function sendAlertInvestigationMessage(params: {
+  alertId: string;
+  question: string;
+  messages?: InvestigationMessage[];
+}): Promise<InvestigationChatResponse> {
+  const response = await fetch(apiUrl("/api/dashboard/investigation/chat"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      alert_id: Number(params.alertId),
+      question: params.question,
+      messages: params.messages || [],
+    }),
   });
   if (!response.ok) {
     throw new Error(await readError(response));

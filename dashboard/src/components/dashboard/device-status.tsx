@@ -40,10 +40,10 @@ export function DeviceStatus({ endpoints }: DeviceStatusProps) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Monitor className="size-5" />
-          公司設備狀態
+          受保護資產
         </CardTitle>
         <CardDescription>
-          目前監控中的設備運作狀況
+          Agent 目前能看見並持續監看的地端資產
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -51,7 +51,7 @@ export function DeviceStatus({ endpoints }: DeviceStatusProps) {
         <div className="mb-4 flex gap-4 rounded-lg bg-muted/50 p-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="size-4 text-success" />
-            <span className="text-sm">{onlineCount} 台正常</span>
+              <span className="text-sm">{onlineCount} 台可監看</span>
           </div>
           {warningCount > 0 && (
             <div className="flex items-center gap-2">
@@ -67,7 +67,7 @@ export function DeviceStatus({ endpoints }: DeviceStatusProps) {
           )}
         </div>
 
-        {/* 設備列表 - 簡化版 */}
+        {/* 端點列表 - 簡化版 */}
         <div className="divide-y divide-border">
           {endpoints.map((endpoint) => (
             <div

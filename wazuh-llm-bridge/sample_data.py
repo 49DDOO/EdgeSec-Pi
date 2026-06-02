@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+import wazuh_settings
+
 try:
     from dotenv import load_dotenv
     _shared_env_path = Path(__file__).resolve().parent.parent / "bridge.env"
@@ -53,18 +55,26 @@ class SampleDataError(RuntimeError):
 
 
 def _auth() -> tuple[str, str]:
-    if not INDEXER_PASS:
+    cfg = wazuh_settings.indexer_config()
+    password = str(cfg.get("password") or "")
+    if not password:
         raise SampleDataError("WAZUH_INDEXER_PASS is not set; cannot query Wazuh sample data")
-    return INDEXER_USER, INDEXER_PASS
+    return str(cfg.get("user") or "admin"), password
 
 
 def _index_pattern(category: str | None) -> str:
     return SAMPLE_CATEGORIES.get((category or "security").strip().lower(), DEFAULT_INDEX_PATTERN)
 
 
+def index_pattern_for_category(category: str | None) -> str:
+    return _index_pattern(category)
+
+
 async def _post_json(path: str, body: dict[str, Any]) -> dict[str, Any]:
-    async with httpx.AsyncClient(auth=_auth(), verify=INDEXER_VERIFY_SSL, timeout=20.0) as client:
-        response = await client.post(f"{INDEXER_URL}/{path.lstrip('/')}", json=body)
+    cfg = wazuh_settings.indexer_config()
+    url = str(cfg.get("url") or "https://localhost:9200").rstrip("/")
+    async with httpx.AsyncClient(auth=_auth(), verify=bool(cfg.get("verify_ssl")), timeout=20.0) as client:
+        response = await client.post(f"{url}/{path.lstrip('/')}", json=body)
         response.raise_for_status()
         data = response.json()
         return data if isinstance(data, dict) else {}

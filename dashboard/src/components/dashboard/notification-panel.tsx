@@ -109,7 +109,7 @@ export function NotificationPanel({ open, onOpenChange, alerts, onAlertClick }: 
               </>
             )}
             
-            <h4 className="text-sm font-semibold text-muted-foreground">最近告警</h4>
+            <h4 className="text-sm font-semibold text-muted-foreground">最近事件</h4>
             {recentAlerts.map((alert) => (
               <div
                 key={alert.id}

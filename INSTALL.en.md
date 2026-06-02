@@ -125,15 +125,19 @@ Restart the Dashboard:
 ### 6. Open the Dashboard
 
 ```text
-http://127.0.0.1:3000/settings/status
+http://127.0.0.1:3000/settings/setup
 ```
 
 For first-time setup, follow this order:
 
-1. Set up at least one notification channel and pass a test message.
-2. Install Agent on computers.
-3. Fill the business context for each endpoint.
-4. Return to Today and wait for alerts.
+1. Connect Wazuh.
+2. Configure AI and verify the model.
+3. Set up at least one notification channel and pass a test message.
+4. Install the first Agent.
+5. Check detection hardening status.
+6. Fill the business context for each endpoint.
+7. Send one test alert.
+8. Return to Today and wait for alerts.
 
 ### 7. Configure Notifications
 
@@ -254,6 +258,11 @@ http://127.0.0.1:3000/settings/status
 
 Click the self-check button. If it reports that the system is usable, the main
 services are connected.
+
+> Note: detection hardening has two evidence layers. Applied `agent-groups`
+> mean the Wazuh hardening recipe was deployed to endpoints. That does not
+> prove Sysmon, FIM, SCA, VirusTotal, or YARA are all producing events. The
+> Dashboard separately checks recent event history as a second signal.
 
 ---
 

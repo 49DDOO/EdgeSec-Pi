@@ -28,6 +28,7 @@ test_sys/logs/
 scripts/certs/
 wazuh-stack/logs/
 wazuh-stack/setup.log
+wazuh-llm-bridge/eval/report_live*.md
 
 # Python / virtualenv
 __pycache__/

@@ -113,8 +113,8 @@ If something's broken, work backwards from the LLM end:
 | LM Studio reachable | `curl -s http://localhost:1234/v1/models \| python3 -m json.tool` | JSON with the loaded model |
 | Bridge healthy | `curl -ks "https://localhost:$BRIDGE_PORT/health"` | `{"status":"ok",...}` |
 | Boss dashboard | `open "http://127.0.0.1:3000"` | management summary page |
-| Bridge ↔ LM Studio | `curl -k -X POST "https://localhost:$BRIDGE_PORT/webhook" -H 'Content-Type: application/json' -d '{"rule":{"id":"5712","level":10,"description":"test"},"full_log":"hi"}'` | `202` and an LLM reply in bridge log |
-| Manager → bridge from container | `docker exec single-node-wazuh.manager-1 curl -ks -X POST "https://host.docker.internal:$BRIDGE_PORT/webhook" -H 'Content-Type: application/json' -d '{"rule":{"id":"5712","level":10,"description":"test"},"full_log":"hi"}'` | `202` |
+| Bridge ↔ LM Studio | `curl -k -X POST "https://localhost:$BRIDGE_PORT/webhook" -H 'Content-Type: application/json' -H "Authorization: Bearer $WEBHOOK_SECRET" -d '{"rule":{"id":"5712","level":10,"description":"test"},"full_log":"hi"}'` | `202` and an LLM reply in bridge log |
+| Manager → bridge from container | `docker exec single-node-wazuh.manager-1 curl -ks -X POST "https://host.docker.internal:$BRIDGE_PORT/webhook" -H 'Content-Type: application/json' -H "Authorization: Bearer $WEBHOOK_SECRET" -d '{"rule":{"id":"5712","level":10,"description":"test"},"full_log":"hi"}'` | `202` |
 | Agent → manager link | `docker exec wazuh-llm-agent /var/ossec/bin/agent_control -l` | `(should be empty)` from agent side; check from manager: `docker exec single-node-wazuh.manager-1 /var/ossec/bin/agent_control -l` and look for `wazuh-agent-01` |
 | Integrator daemon alive | `docker exec single-node-wazuh.manager-1 ps aux \| grep integrator` | `wazuh-integratord` running |
 
@@ -159,4 +159,4 @@ Manager isn't ready yet. Wait 60s and `docker compose -f agent/docker-compose.ym
 
 ## What's next
 
-Once the smoke test puts a real LLM-triaged alert in your bridge log, the Wazuh ↔ LLM loop is closed. The next layer is **what to do with the LLM's verdict** — Slack notification, write to SQLite, fire `wazuh_block_ip` active response. That's option **A** from the original menu, which is genuinely useful only after this stack is working.
+Once the smoke test puts a real LLM-triaged alert in your bridge log, the Wazuh ↔ LLM loop is closed. The next layer is **what to do with the verdict**: persist it to SQLite, show it in the Dashboard, send LINE/Slack/Telegram/email notifications, and only then expose controlled Active Response actions such as IP block/unblock or endpoint isolate/release.

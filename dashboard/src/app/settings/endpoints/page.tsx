@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -14,7 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ThemeToggle } from "@/components/dashboard/theme-toggle";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -168,9 +169,9 @@ function SecurityScoreDialog({
           : `目前比重新檢查前低 ${Math.abs(scoreDelta)} 分，請 IT 查看未通過項目。`;
   const reason =
     score == null
-      ? "Wazuh 還沒有回報這台電腦的安全設定檢查結果。通常是 Agent 剛安裝、尚未完成掃描，或 Manager 尚未同步。"
+      ? "Wazuh 還沒有回報這台端點的安全設定檢查結果。通常是 Agent 剛安裝、尚未完成掃描，或 Manager 尚未同步。"
       : failed > 0
-        ? `這台電腦有 ${failed} 項安全設定沒有通過，所以分數不是滿分。`
+        ? `這台端點有 ${failed} 項安全設定沒有通過，所以分數不是滿分。`
         : "目前沒有未通過項目，分數偏低時請確認是否有部分檢查尚未完成。";
 
   return (
@@ -179,7 +180,7 @@ function SecurityScoreDialog({
         <DialogHeader>
           <DialogTitle>安全設定分數</DialogTitle>
           <DialogDescription>
-            這是電腦設定健檢，不是入侵警報。分數低代表有設定需要請 IT 補強。
+            這是端點設定健檢，不是入侵警報。分數低代表有設定需要請 IT 補強。
           </DialogDescription>
         </DialogHeader>
 
@@ -276,7 +277,7 @@ function SecurityScoreDialog({
                     </div>
                   )) : (
                     <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">
-                      目前只取得分數，尚未取得未通過清單。請 IT 到 Wazuh Dashboard 查看這台電腦的安全設定檢查。
+                      目前只取得分數，尚未取得未通過清單。請 IT 到 Wazuh Dashboard 查看這台端點的安全設定檢查。
                     </div>
                   )}
                 </div>
@@ -303,7 +304,7 @@ function SecurityScoreDialog({
                 <div className="rounded-lg border p-4">
                   <div className="text-base font-semibold">處理後怎麼確認</div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    按下後會要求 Wazuh 重新啟動這台 Agent，讓安全設定檢查重新跑一次；通常不會重開電腦，也不會重讀全部舊日誌。
+                    按下後會要求 Wazuh 重新啟動這台 Agent，讓安全設定檢查重新跑一次；通常不會重開端點，也不會重讀全部舊日誌。
                   </p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
                     <div className="rounded-lg border p-3">
@@ -381,28 +382,10 @@ function installCommand(os: OsKind, managerHost: string) {
   return `curl -so wazuh-agent-4.14.5.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.14.5-1_amd64.deb\nsudo WAZUH_MANAGER='${host}' dpkg -i ./wazuh-agent-4.14.5.deb\nsudo systemctl enable --now wazuh-agent`;
 }
 
-function subscribeToLocationChange(onStoreChange: () => void) {
-  window.addEventListener("popstate", onStoreChange);
-  return () => window.removeEventListener("popstate", onStoreChange);
-}
-
-function getEndpointSection() {
-  return new URLSearchParams(window.location.search).get("section") === "install"
-    ? "install"
-    : "inventory";
-}
-
-function getServerEndpointSection() {
-  return "inventory";
-}
-
-export default function EndpointsPage() {
-  const section = useSyncExternalStore(
-    subscribeToLocationChange,
-    getEndpointSection,
-    getServerEndpointSection
-  );
-  const isInstallView = section === "install";
+function EndpointsPageContent() {
+  const searchParams = useSearchParams();
+  const isInstallView = searchParams.get("section") === "install";
+  const requestedAgent = (searchParams.get("agent") || "").trim();
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
@@ -443,6 +426,24 @@ export default function EndpointsPage() {
       .then((summary) => {
         setEndpoints(summary.endpoints);
         setManagerHost(summary.install?.manager_host || managerHostFromBrowser());
+        if (requestedAgent) {
+          setSearchTerm(requestedAgent);
+          const target = summary.endpoints.find(
+            (endpoint) => endpoint.name === requestedAgent || endpoint.id === requestedAgent
+          );
+          if (target) {
+            const context = target.business_context;
+            setEditing(target);
+            setDraft({
+              role: context?.role || "",
+              owner: context?.owner || "",
+              criticality: context?.criticality || "medium",
+              business_hours: context?.business_hours || "Mon-Fri 09:00-19:00 Asia/Taipei",
+              pci_scope: Boolean(context?.pci_scope),
+              notes: context?.notes || "",
+            });
+          }
+        }
       })
       .catch((error) => {
         toast.error("讀取端點失敗", {
@@ -450,7 +451,7 @@ export default function EndpointsPage() {
         });
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [requestedAgent]);
 
   const filteredEndpoints = endpoints.filter((endpoint) => {
     const query = searchTerm.toLowerCase();
@@ -505,7 +506,7 @@ export default function EndpointsPage() {
 
   async function recheckEndpoint(endpoint: Endpoint) {
     if (!endpoint.id) {
-      toast.error("缺少 Agent ID，無法要求 Wazuh 重新檢查");
+      toast.error("缺少 Agent ID，無法要求重新檢查");
       return;
     }
     setRecheckingAgentId(endpoint.id);
@@ -518,7 +519,7 @@ export default function EndpointsPage() {
           requestedAt: new Date().toISOString(),
         },
       }));
-      toast.success("已要求 Wazuh 重新檢查", {
+      toast.success("已要求端點重新檢查", {
         description: result.message,
       });
       await loadEndpoints();
@@ -533,34 +534,21 @@ export default function EndpointsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-            {isInstallView ? (
-              <Download className="size-5 text-primary" />
-            ) : (
-              <Monitor className="size-5 text-primary" />
-            )}
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold">
-              {isInstallView ? "電腦安裝" : "電腦背景"}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {isInstallView
-                ? "下載與複製 Wazuh Agent 安裝方式"
-                : "查看受監控電腦，補齊業務用途與安全設定"}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        icon={isInstallView ? Download : Monitor}
+        title={isInstallView ? "端點部署" : "資產 / 端點"}
+        description={
+          isInstallView
+            ? "部署第一個已接來源的監控 Agent"
+            : "查看受監控資產，補齊業務用途與安全設定"
+        }
+        actions={
           <Button variant="outline" onClick={loadEndpoints} disabled={loading}>
             <RefreshCw data-icon="inline-start" />
             重新整理
           </Button>
-          <ThemeToggle />
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
@@ -610,9 +598,9 @@ export default function EndpointsPage() {
             <CardHeader>
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <CardTitle>安裝 Agent</CardTitle>
+                  <CardTitle>安裝端點 Agent</CardTitle>
                   <CardDescription>
-                    在要監控的電腦上執行安裝指令；Manager 位址請用內網可連到這台主機的 IP。
+                    在要監控的端點上執行安裝指令；Manager 位址請用內網可連到這台主機的 IP。
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -634,7 +622,7 @@ export default function EndpointsPage() {
                   <label className="text-sm font-medium">Manager 位址</label>
                   <Input value={managerHost} onChange={(event) => setManagerHost(event.target.value)} />
                   <p className="text-xs text-muted-foreground">
-                    例如：192.168.50.177。不要填 127.0.0.1，其他電腦會連不到。
+                    例如：192.168.50.177。不要填 127.0.0.1，其他端點會連不到。
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -667,7 +655,7 @@ export default function EndpointsPage() {
                   </CardDescription>
                 </div>
                 <Input
-                  placeholder="搜尋電腦名稱、IP 或用途..."
+                  placeholder="搜尋端點名稱、IP 或用途..."
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
                   className="md:w-72"
@@ -679,10 +667,10 @@ export default function EndpointsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>狀態</TableHead>
-                    <TableHead>電腦</TableHead>
+                    <TableHead>端點</TableHead>
                     <TableHead>用途</TableHead>
                     <TableHead>作業系統</TableHead>
-                    <TableHead>Agent</TableHead>
+                    <TableHead>監控 Agent</TableHead>
                     <TableHead>安全設定</TableHead>
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
@@ -751,7 +739,7 @@ export default function EndpointsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Download className="size-5" />
-                端點看不到時
+                端點沒有出現時
               </CardTitle>
               <CardDescription>
                 先確認 Agent 已啟動、Manager 位址不是 127.0.0.1，並確認 1514/1515 連線正常。
@@ -834,5 +822,13 @@ export default function EndpointsPage() {
         recheckResult={securityDetails?.id ? recheckResults[securityDetails.id] : undefined}
       />
     </div>
+  );
+}
+
+export default function EndpointsPage() {
+  return (
+    <Suspense fallback={null}>
+      <EndpointsPageContent />
+    </Suspense>
   );
 }

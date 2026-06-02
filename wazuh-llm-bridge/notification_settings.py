@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 
@@ -175,13 +174,3 @@ async def test_channel(channel: str) -> str:
     settings[tested_key] = datetime.now().strftime("%Y-%m-%d %H:%M")
     notify_channels.save_settings(settings)
     return flash
-
-
-def channel_url(channel: str, token: str = "", flash: str = "") -> str:
-    params = []
-    if token:
-        params.append(f"t={quote(token)}")
-    if flash:
-        params.append(f"flash={quote(flash)}")
-    query = f"?{'&'.join(params)}" if params else ""
-    return f"/admin/notifications/{channel}{query}"

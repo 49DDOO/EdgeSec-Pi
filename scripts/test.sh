@@ -163,7 +163,7 @@ case "${1:-default}" in
     check_env
     ;;
   e2e)
-    tests/e2e/smoke-test.sh
+    SMOKE_VERIFY=1 tests/e2e/smoke-test.sh
     ;;
   manual)
     echo "Manual scenario test:"

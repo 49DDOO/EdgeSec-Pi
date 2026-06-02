@@ -159,7 +159,7 @@ service_status_line() {
   local pid
   pid="$(read_pid_file "$pid_file")"
 
-  if curl -ksS -m 3 "$url" >/dev/null 2>&1; then
+  if curl -ksSf -m 3 "$url" >/dev/null 2>&1; then
     if pid_alive "$pid"; then
       c_ok "$name responding at $url (pid $pid)"
     else
@@ -309,7 +309,7 @@ cmd_dashboard() {
     c_err "dashboard source not found at $DASHBOARD_DIR"
     return 1
   fi
-  if curl -sS -m 3 "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null 2>&1; then
+  if curl -fsS -m 3 "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null 2>&1; then
     local pid
     pid="$(listen_pids "$DASHBOARD_PORT" | head -1)"
     [[ -n "$pid" ]] && echo "$pid" > "$LOGS/dashboard.pid"
@@ -380,12 +380,31 @@ cmd_status() {
 }
 
 # ─── smoke test + diagnostics ────────────────────────────────────────────
+default_smoke_ip() {
+  local seed
+  seed="$(date +%s)"
+  printf '203.0.113.%d\n' "$(( (seed + $$) % 200 + 20 ))"
+}
+
+verify_smoke_alert() {
+  local smoke_ip="$1"
+  local rule_id="${2:-5701}"
+  "$ROOT/tests/e2e/verify-smoke-alert.sh" "$smoke_ip" "$rule_id"
+}
+
 cmd_smoke() {
-  c_log "firing smoke test → logs/smoke.log"
-  "$ROOT/tests/e2e/smoke-test.sh" > "$LOGS/smoke.log" 2>&1
+  local smoke_ip="${SMOKE_SOURCE_IP:-$(default_smoke_ip)}"
+  local smoke_count="${SMOKE_ATTEMPTS:-8}"
+  local smoke_rule_id="${SMOKE_RULE_ID:-5701}"
+  if [[ "${SMOKE_MODE:-probe}" == "bruteforce" && -z "${SMOKE_RULE_ID:-}" ]]; then
+    smoke_rule_id="5712"
+  fi
+  c_log "firing smoke test ($smoke_ip) → logs/smoke.log"
+  "$ROOT/tests/e2e/smoke-test.sh" "$smoke_ip" "$smoke_count" > "$LOGS/smoke.log" 2>&1
   c_log "waiting 10s for the chain to settle (agent → manager → integrator → bridge → LM Studio)"
   sleep 10
   cmd_diag
+  verify_smoke_alert "$smoke_ip" "$smoke_rule_id" || return $?
   c_ok "smoke done — see logs/diag.log"
 }
 

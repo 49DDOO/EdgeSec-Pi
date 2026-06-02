@@ -7,7 +7,7 @@ Minimal async FastAPI webhook:
   1. POST /webhook receives a Wazuh alert (JSON)
   2. The handler enqueues the alert and returns 202 immediately,
      so Wazuh's integrator is NEVER blocked by LLM inference time.
-  3. Background workers pull alerts from the queue, extract
+  3. Background workers pull alerts from a priority queue, extract
      `rule.description` + `full_log`, and call LM Studio's
      OpenAI-compatible /v1/chat/completions endpoint.
   4. A bounded queue gives back-pressure (503) when bursts exceed
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 # Load .env BEFORE any os.getenv() calls below so the bridge picks up
-# WAZUH_API_PASS / ADMIN_PASS / WEBHOOK_SECRET / etc. even when launched
+# WAZUH_API_PASS / WEBHOOK_SECRET / etc. even when launched
 # via plain `python -m uvicorn app:app` without --env-file. python-dotenv
 # is already pulled in via uvicorn[standard]. Silently no-op when the
 # file is absent.
@@ -47,6 +47,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
+import alert_queue  # local module: priority queue for alert analysis work
 import db        # local module: SQLite persistence for alerts + LLM verdicts
 import detection_settings  # local module: dashboard category + LLM load controls
 import digest    # local module: daily freshness check (Wazuh ver / CVE feed / agents)
@@ -55,12 +56,12 @@ import slack_actions  # local module: Socket Mode listener for interactive butto
 import mcp_client     # local module: Wazuh MCP Server client (LLM enrichment)
 import triage_router  # local module: Phase 3 — 3-layer routing decision
 import agent_loop     # local module: Phase 3 — tool-using agentic investigation
-import admin_ui       # local module: Phase 4 — /admin browser editor (split from app.py)
 import dashboard_ui   # local module: legacy /dashboard redirect compatibility
 import slack_render   # local module: Slack payload builders + send_to_slack
 import notify_channels  # local module: LINE / email owner notifications
 import prompting      # local module: build_prompt + parse_llm_reply + _extract_extra_context (split from app.py)
 import active_response_api  # local module: destructive /active-response controls
+import active_response_lifecycle  # local module: TTL cleanup for firewall blocks
 import ops_api        # local module: health, query, and admin-triggered ops routes
 import webhook_api    # local module: SIEM alert intake and queue handoff
 
@@ -156,6 +157,11 @@ def _log_config() -> None:
         log.info("  ACTIVE_RESPONSE  = ENABLED (token set)")
     else:
         log.info("  ACTIVE_RESPONSE  = disabled (ACTIVE_RESPONSE_TOKEN not set)")
+    if active_response_lifecycle.ttl_sweeper_enabled():
+        log.info("  AR_TTL_SWEEPER   = ENABLED (interval=%ss)",
+                 active_response_lifecycle.sweep_interval_s())
+    else:
+        log.warning("  AR_TTL_SWEEPER   = disabled; firewall blocks will not auto-expire")
 
     webhook_secret = bool(os.getenv("WEBHOOK_SECRET", "").strip())
     bind_host = os.getenv("BRIDGE_BIND_HOST", "").strip()
@@ -209,6 +215,59 @@ async def analyze(alert: dict[str, Any],
     rule    = alert.get("rule") or {}
     rule_id = rule.get("id", "?")
     level   = rule.get("level", "?")
+
+    try:
+        suppression = await db.match_false_positive_suppression(alert)
+    except Exception as e:                           # pragma: no cover - defensive
+        suppression = None
+        log.warning("worker-%d false-positive suppression lookup failed: %r", worker_id, e)
+    if suppression:
+        t0 = time.perf_counter()
+        suppression_id = int(suppression.get("id") or 0)
+        parsed = {
+            "severity": "info",
+            "summary_zh": "這筆事件符合先前標記的誤報條件，已自動歸檔。",
+            "impact_zh": "系統沒有再呼叫 AI 或發送通知，避免同類誤報重複打擾。",
+            "next_step_zh": "若這次不是預期情境，請重新檢查 Wazuh 規則或停用這條誤報抑制。",
+            "root_cause": (
+                "Bridge-level false-positive suppression matched "
+                f"rule_id={suppression.get('rule_id')}, "
+                f"agent={suppression.get('agent_name') or '*'}, "
+                f"source_ip={suppression.get('source_ip') or '*'}."
+            ),
+            "iocs": [],
+            "action": "Suppressed by EdgeSec-Pi false-positive feedback.",
+            "mitre": None,
+            "needs_investigation": False,
+            "investigation_reason": "",
+            "llm_skipped": True,
+            "false_positive_suppressed": True,
+            "suppression_id": suppression_id,
+        }
+        answer = json.dumps(parsed, ensure_ascii=False)
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        log.info(
+            "worker-%d suppress false-positive rule=%s level=%s suppression_id=%s",
+            worker_id,
+            rule_id,
+            level,
+            suppression_id,
+        )
+        try:
+            await db.save_alert(
+                alert,
+                answer,
+                parsed,
+                latency_ms,
+                None,
+                llm_status="skipped",
+                case_status="false_positive",
+                case_note=f"auto-suppressed by false-positive rule #{suppression_id}",
+                case_actor="fp-suppression",
+            )
+        except Exception as e:
+            log.warning("worker-%d DB save failed: %s", worker_id, e)
+        return
 
     enabled, category = detection_settings.is_enabled_for_alert(alert)
     ai_config = llm_client.current_config()
@@ -338,6 +397,19 @@ async def analyze(alert: dict[str, Any],
                             "(falling back to Stage-1 verdict)", worker_id, e)
                 # answer + parsed from Stage-1 remain; we still notify on those.
 
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    # Persist to SQLite — both successful triage and LLM failures are recorded
+    # so we have an honest history for audit and future analysis. Do this
+    # before Slack so the notification can deep-link back to this row.
+    try:
+        dashboard_alert_id = await db.save_alert(alert, answer, parsed, latency_ms, error_msg)
+        meta = alert.get("_edgesec") if isinstance(alert.get("_edgesec"), dict) else {}
+        meta["dashboard_alert_id"] = dashboard_alert_id
+        alert["_edgesec"] = meta
+    except Exception as e:
+        log.warning("worker-%d DB save failed: %s", worker_id, e)
+
     # ── Notify Slack once with the final verdict + (optional) evidence
     if answer:
         try:
@@ -350,15 +422,6 @@ async def analyze(alert: dict[str, Any],
                 log.info("worker-%d secondary notifications: %s", worker_id, extra_notify)
         except Exception as e:
             log.warning("worker-%d secondary notifications failed: %s", worker_id, e)
-
-    latency_ms = int((time.perf_counter() - t0) * 1000)
-
-    # Persist to SQLite — both successful triage and LLM failures are recorded
-    # so we have an honest history for audit and future analysis.
-    try:
-        await db.save_alert(alert, answer, parsed, latency_ms, error_msg)
-    except Exception as e:
-        log.warning("worker-%d DB save failed: %s", worker_id, e)
 
 
 async def consume(queue: asyncio.Queue,
@@ -390,7 +453,7 @@ async def lifespan(app: FastAPI):
     _log_config()
     log.info("triage policy: %s", triage_router.describe_policy())
 
-    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+    queue: asyncio.Queue = alert_queue.AlertPriorityQueue(maxsize=QUEUE_MAXSIZE)
     client = httpx.AsyncClient()
     workers = [
         asyncio.create_task(consume(queue, client, i))
@@ -398,6 +461,7 @@ async def lifespan(app: FastAPI):
     ]
     # Daily 09:00 freshness digest (Wazuh ver / CVE feed / agents / 24h alerts)
     digest_task = asyncio.create_task(digest.daily_scheduler(SLACK_WEBHOOK_URL))
+    active_response_lifecycle.start_sweeper()
 
     # Slack interactive buttons via Socket Mode (no-op if env vars missing)
     await slack_actions.start_listener()
@@ -412,6 +476,7 @@ async def lifespan(app: FastAPI):
         for w in workers:
             w.cancel()
         await asyncio.gather(digest_task, *workers, return_exceptions=True)
+        await active_response_lifecycle.stop_sweeper()
         await slack_actions.stop_listener()
         await client.aclose()
         log.info("shutdown complete")
@@ -427,11 +492,10 @@ app.add_middleware(
         "https://localhost:3000",
     ],
     allow_credentials=False,
-    allow_methods=["GET", "PATCH", "POST", "OPTIONS"],
+    allow_methods=["DELETE", "GET", "PATCH", "POST", "PUT", "OPTIONS"],
     allow_headers=["*"],
 )
 app.include_router(dashboard_ui.router)     # /dashboard legacy redirect compatibility
-app.include_router(admin_ui.router)         # /admin and /admin/quick-add routes
 app.include_router(active_response_api.router)
 app.include_router(ops_api.router)
 app.include_router(webhook_api.router)

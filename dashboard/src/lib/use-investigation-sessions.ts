@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { InvestigationEvidence, InvestigationMessage } from "@/lib/types";
+import type { InvestigationEvidence, InvestigationMessage, InvestigationSuggestion } from "@/lib/types";
 
-const STORAGE_KEY = "edgesec.investigation.sessions.v1";
+const STORAGE_KEY = "edgesec.investigation.sessions.v3";
 
 export interface InvestigationSession {
   messages: InvestigationMessage[];
   evidence: InvestigationEvidence[];
+  suggestions: InvestigationSuggestion[];
   updatedAt: string;
 }
 
@@ -16,6 +17,7 @@ type InvestigationSessions = Record<string, InvestigationSession>;
 const emptySession = (): InvestigationSession => ({
   messages: [],
   evidence: [],
+  suggestions: [],
   updatedAt: "",
 });
 
@@ -42,18 +44,26 @@ export function useInvestigationSessions() {
   const getSession = useCallback(
     (key: string | null | undefined) => {
       if (!key) return emptySession();
-      return sessions[key] || emptySession();
+      const session = sessions[key];
+      if (!session) return emptySession();
+      return {
+        messages: session.messages || [],
+        evidence: session.evidence || [],
+        suggestions: session.suggestions || [],
+        updatedAt: session.updatedAt || "",
+      };
     },
     [sessions]
   );
 
   const saveSession = useCallback(
-    (key: string, values: Pick<InvestigationSession, "messages" | "evidence">) => {
+    (key: string, values: Pick<InvestigationSession, "messages" | "evidence"> & Partial<Pick<InvestigationSession, "suggestions">>) => {
       setSessions((current) => ({
         ...current,
         [key]: {
           messages: values.messages,
           evidence: values.evidence,
+          suggestions: values.suggestions || [],
           updatedAt: new Date().toISOString(),
         },
       }));

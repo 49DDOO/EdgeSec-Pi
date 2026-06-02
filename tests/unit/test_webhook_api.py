@@ -80,3 +80,21 @@ def test_webhook_returns_backpressure_when_queue_is_full(monkeypatch: pytest.Mon
         assert response.json()["detail"] == "queue full, retry later"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.unit
+def test_webhook_rejects_unknown_explicit_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBHOOK_SECRET", "")
+    webhook_api = fresh_bridge_import(["webhook_api"])["webhook_api"]
+
+    async def scenario() -> None:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+        transport = httpx.ASGITransport(app=_test_app(webhook_api.router, queue))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post("/webhook/not-a-real-source", json={"message": "hello"})
+
+        assert response.status_code == 400
+        assert "unsupported SIEM source" in response.json()["detail"]
+        assert queue.empty()
+
+    asyncio.run(scenario())

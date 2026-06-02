@@ -94,7 +94,7 @@ export function RiskOverview({ data }: RiskOverviewProps) {
         <div className="mt-4 flex items-center justify-between border-t pt-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <TrendingUp className="size-4" />
-            今日告警總數
+            今日事件總數
           </div>
           <span className="text-lg font-semibold">{data.total_alerts_today}</span>
         </div>

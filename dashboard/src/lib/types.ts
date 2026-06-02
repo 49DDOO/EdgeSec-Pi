@@ -17,6 +17,8 @@ export interface Alert {
   summary: string;
   business_impact: string;
   recommended_action: string;
+  /** MDR 調查路徑產出的白話說明：AI 做了什麼查證、發現什麼、為何下此判斷（無調查時為空字串） */
+  investigation_summary_zh?: string;
   status: AlertStatus;
   purpose?: string;
   mitre?: string;
@@ -54,6 +56,8 @@ export interface TechnicalEvidence {
     process?: string;
     port?: string;
     hashes?: string[];
+    hash_before?: Record<string, string>;
+    hash_after?: Record<string, string>;
     domain?: string;
     cve?: string;
     package?: string;
@@ -61,6 +65,24 @@ export interface TechnicalEvidence {
     iocs?: string[];
   };
   module_context?: Record<string, string>;
+  fim_brief?: {
+    title_zh: string;
+    category: string;
+    severity: string;
+    risk_label_zh: string;
+    file_path: string;
+    event: string;
+    event_zh: string;
+    changed_by: string;
+    process: string;
+    changed_at?: string;
+    business_meaning_zh: string;
+    impact_zh: string;
+    recommended_steps_zh: string[];
+    it_checks: string[];
+    hash_before?: Record<string, string>;
+    hash_after?: Record<string, string>;
+  };
   remediation: {
     wazuh?: string;
     llm?: string;
@@ -196,6 +218,37 @@ export interface AiModelListResult {
   message?: string;
 }
 
+export interface WazuhSettings {
+  WAZUH_DEPLOYMENT_MODE: "managed" | "existing" | "local_lab";
+  WAZUH_DEPLOYMENT_LABEL_ZH: string;
+  WAZUH_API_URL: string;
+  WAZUH_API_USER: string;
+  WAZUH_API_PASS: string;
+  WAZUH_API_PASS_configured: boolean;
+  WAZUH_API_PASS_preview: string;
+  WAZUH_VERIFY_SSL: boolean;
+  WAZUH_INDEXER_URL: string;
+  WAZUH_INDEXER_USER: string;
+  WAZUH_INDEXER_PASS: string;
+  WAZUH_INDEXER_PASS_configured: boolean;
+  WAZUH_INDEXER_PASS_preview: string;
+  WAZUH_INDEXER_VERIFY_SSL: boolean;
+  BRIDGE_PUBLIC_URL: string;
+  WEBHOOK_SECRET: string;
+  WEBHOOK_SECRET_configured: boolean;
+  WEBHOOK_SECRET_preview: string;
+  webhook_url: string;
+  message?: string;
+}
+
+export interface WazuhConnectionTestResult {
+  ok: boolean;
+  message: string;
+  agents_total?: number;
+  status?: string;
+  cluster_name?: string;
+}
+
 export type ServiceCheckStatus = "ok" | "warn" | "fail" | "skip";
 
 export interface ServiceCheck {
@@ -251,11 +304,20 @@ export interface InvestigationEvidence {
   tool: string;
   args: Record<string, unknown>;
   result_preview?: string;
+  result_log?: string;
+}
+
+export interface InvestigationSuggestion {
+  label_zh: string;
+  description_zh: string;
+  action: "handoff_it" | "mark_resolved" | "mark_false_positive" | "mark_normal" | "ask_followup";
+  followup_question?: string;
 }
 
 export interface InvestigationChatResponse {
   answer_zh: string;
   evidence: InvestigationEvidence[];
+  suggestions?: InvestigationSuggestion[];
 }
 
 export type DetectionCategoryKey =
@@ -274,10 +336,95 @@ export interface DetectionCategory {
   key: DetectionCategoryKey;
   label_zh: string;
   description_zh: string;
+  detail_zh?: string;
+}
+
+export type DetectionPresetKey = "conservative" | "recommended" | "expanded" | "custom";
+
+export interface DetectionPreset {
+  key: Exclude<DetectionPresetKey, "custom">;
+  label_zh: string;
+  description_zh: string;
+  noise_level: "low" | "medium" | "high";
+  enabled: Record<DetectionCategoryKey, boolean>;
+}
+
+export interface DetectionNoiseProfile {
+  noisy_categories: DetectionCategoryKey[];
+  core_disabled: DetectionCategoryKey[];
+  false_positive_suppression: boolean;
+  warnings: string[];
 }
 
 export interface DetectionCategorySettings {
   categories: DetectionCategory[];
   enabled: Record<DetectionCategoryKey, boolean>;
+  presets?: DetectionPreset[];
+  active_preset?: DetectionPresetKey;
+  noise?: DetectionNoiseProfile;
   message?: string;
+}
+
+export type DataSourceStatus = "active" | "needs_setup" | "planned" | "disabled" | "error";
+export type DataSourceCapabilityState = "ready" | "planned" | "not_available";
+
+export interface DataSourceCapability {
+  key: string;
+  label_zh: string;
+  state: DataSourceCapabilityState;
+}
+
+export interface DataSourceItem {
+  key: string;
+  label_zh: string;
+  product_zh: string;
+  category_zh: string;
+  agent_roles?: Array<"security_source" | "evidence_provider" | "response_provider" | string>;
+  deployment_mode?: "managed" | "existing" | "local_lab" | string;
+  deployment_label_zh?: string;
+  status: DataSourceStatus;
+  enabled: boolean;
+  configured: boolean;
+  primary: boolean;
+  can_configure: boolean;
+  settings_href: string;
+  setup_href: string;
+  test_supported: boolean;
+  summary_zh: string;
+  next_step_zh: string;
+  evidence_zh: string[];
+  capabilities: DataSourceCapability[];
+}
+
+export interface DataSourcesResponse {
+  generated_at: string;
+  canonical_schema_version: string;
+  primary_source: string;
+  response_providers_ready?: number;
+  sources: DataSourceItem[];
+  message_zh: string;
+}
+
+export interface DataSourceTestResult {
+  ok: boolean;
+  source: string;
+  status: string;
+  message_zh: string;
+  next_step_zh?: string;
+}
+
+export type SetupStepId = "wazuh" | "ai" | "notify" | "agent" | "hardening" | "context" | "test";
+export type SetupStepState = "done" | "attention" | "todo";
+export type SetupStepScope = "source" | "global";
+
+export interface SetupStepModel {
+  id: SetupStepId;
+  title: string;
+  description: string;
+  state: SetupStepState;
+  scope?: SetupStepScope;
+  detail: string;
+  href: string;
+  cta: string;
+  primary?: boolean;
 }

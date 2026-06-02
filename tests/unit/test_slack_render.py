@@ -119,6 +119,9 @@ def test_slack_emergency_buttons_explain_actions(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
     monkeypatch.setenv("SLACK_CHANNEL_ID", "C123")
     monkeypatch.setenv("WAZUH_ISOLATE_COMMAND", "edgesec-isolate0")
+    monkeypatch.setenv("WAZUH_RELEASE_ISOLATE_COMMAND", "edgesec-release-isolate0")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_PRESERVE_CHANNELS_ACK", "1")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS", "macos")
     monkeypatch.setenv("BRIDGE_PUBLIC_URL", "https://edgesec.example")
     monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
     modules = fresh_bridge_import(["remote_action_tokens", "slack_actions", "slack_render"])
@@ -127,23 +130,37 @@ def test_slack_emergency_buttons_explain_actions(monkeypatch, tmp_path) -> None:
 
     payload = slack_render.build_quick_slack_blocks_payload(
         {
-            "agent": {"id": "003", "name": "MB-TitanCheng", "ip": "192.168.50.106"},
-            "data": {"srcip": "198.51.100.42"},
+            "agent": {
+                "id": "003",
+                "name": "MB-TitanCheng",
+                "ip": "192.168.50.106",
+                "os": {"platform": "darwin"},
+            },
+            "data": {"srcip": "8.8.8.8"},
             "rule": {"description": "SSH brute force"},
         },
         {
             "severity": "high",
             "summary_zh": "有人多次嘗試登入這台電腦。",
-            "iocs": ["198.51.100.42"],
+            "iocs": ["8.8.8.8"],
         },
     )
     payload = slack_render._augment_with_action_buttons(
         payload,
         {
-            "agent": {"id": "003", "name": "MB-TitanCheng", "ip": "192.168.50.106"},
-            "data": {"srcip": "198.51.100.42"},
+            "agent": {
+                "id": "003",
+                "name": "MB-TitanCheng",
+                "ip": "192.168.50.106",
+                "os": {"platform": "darwin"},
+            },
+            "data": {"srcip": "8.8.8.8"},
         },
-        {"iocs": ["198.51.100.42"]},
+        {
+            "severity": "high",
+            "iocs": ["8.8.8.8"],
+            "root_cause": "successful login after brute force",
+        },
     )
 
     blocks = payload["attachments"][0]["blocks"]
@@ -161,7 +178,7 @@ def test_slack_emergency_buttons_explain_actions(monkeypatch, tmp_path) -> None:
     ]
 
     assert "封鎖來源 IP" in action_texts
-    assert "解除封鎖" in action_texts
+    assert "解除封鎖" not in action_texts
     assert "隔離端點" in action_texts
     assert "封鎖來源 IP*：擋住外部來源" in help_text
     assert "隔離端點*：暫停這台電腦連線" in help_text
@@ -171,15 +188,56 @@ def test_slack_emergency_buttons_explain_actions(monkeypatch, tmp_path) -> None:
         for block in blocks
         if block.get("type") == "actions"
         for element in block.get("elements", [])
-        if element.get("action_id") in {"block_ip", "unblock_ip", "isolate_endpoint"}
+        if element.get("action_id") in {"block_ip", "isolate_endpoint"}
     ]
     assert action_values
     assert all("|" not in value for value in action_values)
     claims = remote_action_tokens.consume(action_values[0], "block_ip", clicker="U-test")
     assert claims["agent_id"] == "003"
-    assert claims["target"] == "198.51.100.42"
+    assert claims["target"] == "8.8.8.8"
     with pytest.raises(remote_action_tokens.ActionTokenError, match="已使用過"):
         remote_action_tokens.consume(action_values[0], "block_ip", clicker="U-test")
+
+
+@pytest.mark.unit
+def test_slack_card_links_back_to_dashboard(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAZUH_API_PASS", "test-pass")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "alerts.db"))
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_ID", "C123")
+    monkeypatch.setenv("DASHBOARD_V2_URL", "https://dashboard.example")
+    monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
+    slack_render = fresh_bridge_import(["slack_actions", "slack_render"])["slack_render"]
+
+    alert = {
+        "agent": {"id": "003", "name": "MB-TitanCheng"},
+        "rule": {"description": "Network changed"},
+        "_edgesec": {"dashboard_alert_id": 123},
+    }
+    payload = slack_render.build_quick_slack_blocks_payload(
+        alert,
+        {"severity": "high", "summary_zh": "網路狀態有變動。"},
+    )
+    payload = slack_render._augment_with_action_buttons(payload, alert, {})
+
+    action_buttons = [
+        element
+        for block in payload["attachments"][0]["blocks"]
+        if block.get("type") == "actions"
+        for element in block.get("elements", [])
+    ]
+
+    dashboard_button = next(
+        element for element in action_buttons if element["text"]["text"] == "查看 Dashboard"
+    )
+    assert dashboard_button["url"] == "https://dashboard.example/?tab=alerts&alert=123"
+
+    legacy = slack_render.build_quick_slack_payload(
+        alert,
+        {"severity": "high", "summary_zh": "網路狀態有變動。"},
+    )
+    assert legacy["attachments"][0]["title_link"] == "https://dashboard.example/?tab=alerts&alert=123"
 
 
 @pytest.mark.unit
@@ -190,12 +248,14 @@ def test_slack_hides_isolation_button_when_isolation_is_not_configured(monkeypat
     monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
     monkeypatch.setenv("SLACK_CHANNEL_ID", "C123")
     monkeypatch.setenv("WAZUH_ISOLATE_COMMAND", "")
+    monkeypatch.setenv("WAZUH_RELEASE_ISOLATE_COMMAND", "")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_PRESERVE_CHANNELS_ACK", "0")
     monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
     slack_render = fresh_bridge_import(["slack_actions", "slack_render"])["slack_render"]
 
     alert = {
         "agent": {"id": "003", "name": "MB-TitanCheng", "ip": "192.168.50.106"},
-        "data": {"srcip": "198.51.100.42"},
+        "data": {"srcip": "8.8.8.8"},
         "rule": {"description": "SSH brute force"},
     }
     payload = slack_render.build_quick_slack_blocks_payload(
@@ -203,10 +263,10 @@ def test_slack_hides_isolation_button_when_isolation_is_not_configured(monkeypat
         {
             "severity": "high",
             "summary_zh": "有人多次嘗試登入這台電腦。",
-            "iocs": ["198.51.100.42"],
+            "iocs": ["8.8.8.8"],
         },
     )
-    payload = slack_render._augment_with_action_buttons(payload, alert, {"iocs": ["198.51.100.42"]})
+    payload = slack_render._augment_with_action_buttons(payload, alert, {"iocs": ["8.8.8.8"]})
 
     action_texts = [
         element["text"]["text"]
@@ -216,8 +276,137 @@ def test_slack_hides_isolation_button_when_isolation_is_not_configured(monkeypat
     ]
 
     assert "封鎖來源 IP" in action_texts
-    assert "解除封鎖" in action_texts
+    assert "解除封鎖" not in action_texts
     assert "隔離端點" not in action_texts
+
+
+@pytest.mark.unit
+def test_slack_hides_isolation_button_when_platform_is_not_verified(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAZUH_API_PASS", "test-pass")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "alerts.db"))
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_ID", "C123")
+    monkeypatch.setenv("WAZUH_ISOLATE_COMMAND", "edgesec-isolate0")
+    monkeypatch.setenv("WAZUH_RELEASE_ISOLATE_COMMAND", "edgesec-release-isolate0")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_PRESERVE_CHANNELS_ACK", "1")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS", "linux")
+    monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
+    slack_render = fresh_bridge_import(["slack_actions", "slack_render"])["slack_render"]
+
+    alert = {
+        "agent": {
+            "id": "003",
+            "name": "WIN-EMPLOYEE",
+            "ip": "192.168.50.106",
+            "os": {"platform": "windows"},
+        },
+        "data": {"srcip": "192.168.50.106", "dstip": "8.8.8.8"},
+        "rule": {"level": 10, "description": "Suspicious outbound connection"},
+    }
+    parsed = {
+        "severity": "high",
+        "summary_zh": "這台電腦主動連到可疑外部位址。",
+    }
+    payload = slack_render.build_quick_slack_blocks_payload(alert, parsed)
+    payload = slack_render._augment_with_action_buttons(payload, alert, parsed)
+
+    action_texts = [
+        element["text"]["text"]
+        for block in payload["attachments"][0]["blocks"]
+        if block.get("type") == "actions"
+        for element in block.get("elements", [])
+    ]
+
+    assert "隔離端點" not in action_texts
+
+
+@pytest.mark.unit
+def test_slack_does_not_block_internal_source_or_llm_only_ioc(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAZUH_API_PASS", "test-pass")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "alerts.db"))
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_ID", "C123")
+    monkeypatch.setenv("WAZUH_ISOLATE_COMMAND", "edgesec-isolate0")
+    monkeypatch.setenv("WAZUH_RELEASE_ISOLATE_COMMAND", "edgesec-release-isolate0")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_PRESERVE_CHANNELS_ACK", "1")
+    monkeypatch.delenv("ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS", raising=False)
+    monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
+    slack_render = fresh_bridge_import(["slack_actions", "slack_render"])["slack_render"]
+
+    alert = {
+        "agent": {"id": "003", "name": "MB-TitanCheng", "ip": "192.168.50.106"},
+        "data": {"srcip": "192.168.50.10"},
+        "rule": {"description": "Internal SSH failures"},
+    }
+    parsed = {
+        "severity": "high",
+        "summary_zh": "內網來源多次嘗試登入。",
+        "iocs": ["8.8.8.8"],
+    }
+    payload = slack_render.build_quick_slack_blocks_payload(alert, parsed)
+    payload = slack_render._augment_with_action_buttons(payload, alert, parsed)
+
+    blocks = payload["attachments"][0]["blocks"]
+    action_texts = [
+        element["text"]["text"]
+        for block in blocks
+        if block.get("type") == "actions"
+        for element in block.get("elements", [])
+    ]
+    help_text = "\n".join(
+        element["text"]
+        for block in blocks
+        if block.get("type") == "context"
+        for element in block.get("elements", [])
+    )
+
+    assert "封鎖來源 IP" not in action_texts
+    assert "隔離端點" not in action_texts
+    assert "沒有安全可自動封鎖的外部來源" in help_text
+
+
+@pytest.mark.unit
+def test_slack_endpoint_outbound_alert_shows_isolation_not_block(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WAZUH_API_PASS", "test-pass")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "alerts.db"))
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-test")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_ID", "C123")
+    monkeypatch.setenv("WAZUH_ISOLATE_COMMAND", "edgesec-isolate0")
+    monkeypatch.setenv("WAZUH_RELEASE_ISOLATE_COMMAND", "edgesec-release-isolate0")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_PRESERVE_CHANNELS_ACK", "1")
+    monkeypatch.setenv("ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS", "macos")
+    monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
+    slack_render = fresh_bridge_import(["slack_actions", "slack_render"])["slack_render"]
+
+    alert = {
+        "agent": {
+            "id": "003",
+            "name": "MB-TitanCheng",
+            "ip": "192.168.50.106",
+            "os": {"platform": "darwin"},
+        },
+        "data": {"srcip": "192.168.50.106", "dstip": "8.8.8.8"},
+        "rule": {"level": 10, "description": "Suspicious outbound connection"},
+    }
+    parsed = {
+        "severity": "high",
+        "summary_zh": "這台電腦主動連到可疑外部位址。",
+    }
+    payload = slack_render.build_quick_slack_blocks_payload(alert, parsed)
+    payload = slack_render._augment_with_action_buttons(payload, alert, parsed)
+
+    action_texts = [
+        element["text"]["text"]
+        for block in payload["attachments"][0]["blocks"]
+        if block.get("type") == "actions"
+        for element in block.get("elements", [])
+    ]
+
+    assert "封鎖來源 IP" not in action_texts
+    assert "隔離端點" in action_texts
 
 
 @pytest.mark.unit
@@ -271,7 +460,7 @@ def test_slack_non_numeric_agent_id_does_not_show_emergency_actions(monkeypatch,
 
     alert = {
         "agent": {"id": "not-a-wazuh-id", "name": "lab-host"},
-        "data": {"srcip": "198.51.100.42"},
+        "data": {"srcip": "8.8.8.8"},
         "rule": {"description": "SSH brute force"},
     }
     payload = slack_render.build_quick_slack_blocks_payload(
@@ -279,10 +468,10 @@ def test_slack_non_numeric_agent_id_does_not_show_emergency_actions(monkeypatch,
         {
             "severity": "high",
             "summary_zh": "有人多次嘗試登入這台電腦。",
-            "iocs": ["198.51.100.42"],
+            "iocs": ["8.8.8.8"],
         },
     )
-    payload = slack_render._augment_with_action_buttons(payload, alert, {"iocs": ["198.51.100.42"]})
+    payload = slack_render._augment_with_action_buttons(payload, alert, {"iocs": ["8.8.8.8"]})
 
     action_texts = [
         element["text"]["text"]

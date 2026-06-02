@@ -7,12 +7,15 @@ BRIDGE_DIR = Path(__file__).resolve().parents[2] / "wazuh-llm-bridge"
 sys.path.insert(0, str(BRIDGE_DIR))
 
 import technical_evidence  # noqa: E402
+import fim_risk_profile  # noqa: E402
+import siem  # noqa: E402
 
 
 def evidence(alert, llm=None):
+    meta = alert.get("_edgesec") if isinstance(alert.get("_edgesec"), dict) else {}
     return technical_evidence.build_technical_evidence(
         row={
-            "siem_source": "wazuh",
+            "siem_source": meta.get("siem_source", "wazuh"),
             "rule_id": alert["rule"]["id"],
             "rule_level": alert["rule"]["level"],
             "rule_description": alert["rule"]["description"],
@@ -103,6 +106,54 @@ def test_fim_evidence_extracts_path_user_and_process():
     assert item["indicators"]["username"] == "root"
     assert item["indicators"]["process"] == "vim"
     assert "abc123" in item["indicators"]["hashes"]
+    assert item["fim_brief"]["category"] == "account_access"
+    assert item["fim_brief"]["severity"] == "high"
+    assert item["fim_brief"]["changed_by"] == "root"
+    assert "帳號" in item["fim_brief"]["risk_label_zh"]
+
+
+@pytest.mark.unit
+def test_fim_brief_keeps_before_and_after_hashes():
+    item = evidence({
+        "rule": {"id": "550", "level": 12, "description": "Integrity checksum changed."},
+        "agent": {"id": "001", "name": "finance-server", "ip": "192.168.1.50"},
+        "timestamp": "2026-05-25T03:12:00+08:00",
+        "data": {
+            "syscheck": {
+                "path": "/etc/sudoers",
+                "event": "modified",
+                "audit": {
+                    "user": {"name": "root"},
+                    "process": {"name": "visudo"},
+                },
+                "sha256_before": "abc123",
+                "sha256_after": "def456",
+            }
+        },
+        "full_log": "File '/etc/sudoers' checksum changed.",
+    })
+
+    brief = item["fim_brief"]
+    assert brief["category"] == "privilege_control"
+    assert brief["file_path"] == "/etc/sudoers"
+    assert brief["event_zh"] == "修改"
+    assert brief["process"] == "visudo"
+    assert brief["changed_at"] == "2026-05-25T03:12:00+08:00"
+    assert brief["hash_before"]["sha256"] == "abc123"
+    assert brief["hash_after"]["sha256"] == "def456"
+    assert "管理權限" in brief["business_meaning_zh"]
+
+
+@pytest.mark.unit
+def test_fim_risk_profile_classifies_authorized_keys_and_generic_tmp():
+    ssh = fim_risk_profile.classify("/home/alice/.ssh/authorized_keys")
+    tmp = fim_risk_profile.classify("/tmp/test.txt")
+
+    assert ssh["category"] == "remote_access"
+    assert ssh["severity"] == "high"
+    assert "後門" in ssh["impact_zh"]
+    assert tmp["category"] == "general_file_change"
+    assert tmp["severity"] == "low"
 
 
 @pytest.mark.unit
@@ -166,3 +217,59 @@ def test_syscollector_like_network_change_is_not_reduced_to_ioc_only():
     assert item["module"] == "syscollector"
     assert item["indicators"]["port"] == "8080"
     assert item["endpoint"]["ip"] == "192.168.50.106"
+
+
+@pytest.mark.unit
+def test_non_wazuh_identity_evidence_uses_canonical_fallbacks():
+    alert = siem.normalize_alert(
+        {
+            "id": "m365-risk-1",
+            "severity": "critical",
+            "userPrincipalName": "alice@example.com",
+            "ipAddress": "198.51.100.44",
+            "riskLevel": "high",
+            "riskEventType": "impossibleTravel",
+            "Operation": "UserLoggedIn",
+            "message": "Risky sign-in from impossible travel.",
+            "properties": {
+                "userPrincipalName": "alice@example.com",
+                "ipAddress": "198.51.100.44",
+            },
+        },
+        source_hint="m365",
+    )
+
+    item = evidence(alert)
+
+    assert item["source"] == "microsoft_365"
+    assert item["module"] == "identity"
+    assert item["canonical"]["signal_type"] == "identity.risky_signin"
+    assert item["indicators"]["source_ip"] == "198.51.100.44"
+    assert item["indicators"]["username"] == "alice@example.com"
+
+
+@pytest.mark.unit
+def test_non_wazuh_process_evidence_preserves_canonical_observables():
+    alert = siem.normalize_alert(
+        {
+            "@timestamp": "2026-05-31T10:00:00Z",
+            "event": {"id": "elastic-4104", "severity": "warning", "reason": "Suspicious process"},
+            "host": {"name": "macbook-01"},
+            "process": {
+                "name": "powershell.exe",
+                "executable": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "command_line": "powershell -enc SQBFAFgA",
+            },
+            "file": {"hash": {"sha256": "abc123"}},
+        },
+        source_hint="elastic",
+    )
+
+    item = evidence(alert)
+
+    assert item["source"] == "elastic"
+    assert item["module"] == "process"
+    assert item["canonical"]["signal_type"] == "endpoint.process"
+    assert item["indicators"]["process"] == "powershell.exe"
+    assert item["canonical"]["observables"]["commands"] == ["powershell -enc SQBFAFgA"]
+    assert item["canonical"]["observables"]["hashes"] == ["abc123"]

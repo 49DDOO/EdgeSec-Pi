@@ -35,12 +35,3 @@ def test_notification_settings_preserve_existing_secret_when_blank(monkeypatch, 
     assert message == "LINE 設定已儲存。請按測試確認通知能送達。"
     assert settings["LINE_CHANNEL_ACCESS_TOKEN"] == "old-token"
     assert settings["LINE_USER_ID"] == "U123"
-
-
-@pytest.mark.unit
-def test_notification_settings_builds_channel_url_with_flash() -> None:
-    notification_settings = fresh_bridge_import(["notification_settings"])["notification_settings"]
-
-    url = notification_settings.channel_url("line", "token value", "測試成功")
-
-    assert url == "/admin/notifications/line?t=token%20value&flash=%E6%B8%AC%E8%A9%A6%E6%88%90%E5%8A%9F"

@@ -24,6 +24,11 @@ via centralized group configuration. Once installed, every enrolled agent
 automatically pulls the right combination based on its detected OS — no
 SSH-and-edit-each-machine when you add a new agent.
 
+Scope note: seeing these groups in Wazuh only proves the hardening recipe
+was deployed and assigned. It does **not** by itself prove that every module
+is producing events. Confirm the second layer by checking recent Wazuh data
+for FIM/SCA/Sysmon/VirusTotal/YARA or other expected module events.
+
 | Layer | Group | Applies to | Adds (above Wazuh defaults) |
 |-------|-------|------------|------------------------------|
 | 1 | `default` | every agent (implicit) | Enforces explicit Rootcheck/SCA/Syscollector schedules so vendor changes don't drift them |

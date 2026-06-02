@@ -58,11 +58,11 @@ export function SampleDataTester() {
     setSendingBuiltIn(true);
     try {
       const result = await replayBuiltInTestAlert();
-      toast.success("內建測試告警已送出", {
+      toast.success("內建測試事件已送出", {
         description: result.message || "請確認通知管道是否收到測試訊息",
       });
     } catch (error) {
-      toast.error("送出內建測試告警失敗", {
+      toast.error("送出內建測試事件失敗", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -74,11 +74,11 @@ export function SampleDataTester() {
     setSendingWazuh(true);
     try {
       const result = await replaySampleData({ category: "security", limit: 1, min_level: 7 });
-      toast.success("Wazuh 測試告警已送出", {
-        description: result.message || `已送出 ${result.queued} 筆測試告警`,
+      toast.success("Wazuh 測試事件已送出", {
+        description: result.message || `已送出 ${result.queued} 筆測試事件`,
       });
     } catch (error) {
-      toast.error("送出 Wazuh 測試告警失敗", {
+      toast.error("送出 Wazuh 測試事件失敗", {
         description: error instanceof Error ? error.message : String(error),
       });
     } finally {
@@ -98,7 +98,7 @@ export function SampleDataTester() {
             測試通知流程
           </CardTitle>
           <CardDescription>
-            先用內建測試告警確認通知會到；需要更貼近 Wazuh 情境時，再送 Wazuh Sample Data。
+            先用內建測試事件確認通知會到；需要更貼近 Wazuh 情境時，再送 Wazuh Sample Data。
           </CardDescription>
         </div>
         <Badge variant={available ? "secondary" : "outline"}>
@@ -113,7 +113,7 @@ export function SampleDataTester() {
               <div>
                 <h3 className="font-semibold">EdgeSec-Pi 內建測試</h3>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  不需要先去 Wazuh 加資料。會送 1 筆假告警，驗證 AI 解釋、資料庫與通知流程。
+                  不需要先去 Wazuh 加資料。會送 1 筆假事件，驗證 AI 解釋、資料庫與通知流程。
                 </p>
               </div>
             </div>
@@ -123,7 +123,7 @@ export function SampleDataTester() {
               ) : (
                 <TestTube2 data-icon="inline-start" />
               )}
-              {sendingBuiltIn ? "送出中..." : "發送內建測試告警"}
+              {sendingBuiltIn ? "送出中..." : "發送內建測試事件"}
             </Button>
           </div>
 
@@ -158,7 +158,7 @@ export function SampleDataTester() {
                 ) : (
                   <TestTube2 data-icon="inline-start" />
                 )}
-                {sendingWazuh ? "送出中..." : "發送 Wazuh 測試告警"}
+                {sendingWazuh ? "送出中..." : "發送 Wazuh 測試事件"}
               </Button>
             </div>
           </div>
