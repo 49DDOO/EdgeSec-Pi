@@ -1,18 +1,49 @@
 # EdgeSec-Pi
 
-EdgeSec-Pi is a local Wazuh alert explanation and response bridge for small
-and medium-sized businesses. It receives Wazuh alerts, summarizes them in
-business-readable Traditional Chinese, stores the history locally, and can send
-LINE, Slack, Telegram, or email notifications with optional response actions.
+EdgeSec-Pi is a security agent advice layer for small and medium-sized
+businesses. It receives alerts from upstream security sources, with Wazuh Alert
+as the first production source, normalizes them into a canonical signal,
+explains them in business-readable Traditional Chinese, stores the history
+locally, and can send LINE, Slack, Telegram, or email notifications with
+optional human-approved response actions.
 
-The project is designed for teams that already like Wazuh's detection depth but
-need a simpler owner-facing workflow: "What happened, how serious is it, and
-what should we do next?"
+The project is designed for teams that need a controlled security agent
+recommendation flow rather than a free-form chatbot: "What happened, how
+serious is it, what evidence supports that, and should anyone do anything now?"
 
-> Project status: preview / pilot. EdgeSec-Pi is not a SIEM replacement and not
-> a SOC automation platform. Wazuh remains the detection source of truth; this
-> project adds a readable dashboard, notification workflow, and controlled
-> response helpers on top.
+> Project status: preview / pilot. EdgeSec-Pi is not a Wazuh distribution, not a
+> SIEM replacement, and not a generic autonomous AI agent. Wazuh Alert is
+> currently the first event source of truth; Wazuh MCP/API and Active Response
+> are capabilities around that source for evidence lookup and controlled
+> response. EdgeSec-Pi adds the owner-facing agent advice workflow,
+> notification routing, evidence handling, and response guardrails on top.
+
+## 專案目的（Project Purpose）
+
+EdgeSec-Pi 是給**沒有 SOC 團隊的中小企業**使用的「資安 Agent 建議層」。Dashboard 就像 Agent 把上游告警消化後給你的建議面板：今天安不安全、老闆要不要決定、IT 要處理什麼。它**不取代 Wazuh，也不重做 SIEM 或 EDR**，而是把 Wazuh Alert 這類事件來源、證據查詢能力、受控處置能力接起來，形成**老闆看得懂、IT 能執行、AI 不能越權**的判斷與處置流程。
+
+1. **接入事件來源** — 先以 Wazuh Alert 為第一個來源，未來可擴充 Microsoft 365、Google Workspace、防火牆、EDR 等事件來源。
+2. **統一事件格式** — 把不同來源的告警轉成 canonical signal，讓判斷流程不被單一產品綁死。
+3. **協助判斷風險** — 以**規則與 playbook 為主、本地 LLM 負責解釋**，搭配歷史查證與企業資產脈絡，判斷這是噪音、可觀察事件，還是需要 IT 立刻處理的風險。LLM 是解釋者，不是裁判：嚴重度與處置由 deterministic 規則約束，LLM 不得憑空升降級、也不授權任何破壞性動作。
+4. **產出白話說明** — 給老闆的是繁體中文白話結論：哪台電腦、發生什麼事、會有什麼影響、下一步找誰處理。
+5. **提供 IT 證據** — 給 IT 的是來源 IP、帳號、主機、規則、MITRE、歷史關聯、MCP 查證結果等可執行證據。
+6. **支援安全處置** — 先透過 Wazuh Active Response 做封鎖 IP、隔離端點、解除封鎖、解除隔離；未來可接防火牆、EDR、雲端身分平台等處置能力。所有破壞性動作都要經過人工確認、TTL、白名單、防呆與稽核。**Dashboard 是 Agent 建議與決策介面，不是唯讀儀表板。**
+
+**界線（誠實聲明）：** EdgeSec-Pi 的偵測能力取決於上游來源——它判斷、翻譯、處置 Wazuh（或其他來源）**已經偵測到**的事件，本身不做偵測。要抓得到更多，請強化上游（agent-groups、Sysmon、VirusTotal、YARA 等）。
+
+> 一句話：EdgeSec-Pi 把不同來源送來的「資安告警」變成「中小企業真的看得懂、能判斷、能安全處理的 Agent 建議」。
+
+## Agent Advice Flow Model
+
+| Layer | Responsibility | Current implementation |
+|-------|----------------|------------------------|
+| Event source | Sends alerts or security events into EdgeSec-Pi. | Wazuh Alert webhook first; planned Google Workspace, Microsoft 365, Firewall, and EDR event sources. |
+| Canonical signal | Normalizes vendor payloads into one security-event shape. | `canonical_signal.py` plus source adapters. |
+| Evidence capability | Looks up context before the LLM explains the event. | Wazuh MCP and Wazuh Manager/Indexer queries. |
+| Decision playbook | Makes deterministic routing and safety decisions. | Triage routing, false-positive suppression, detection categories, and response guards. |
+| Explanation agent | Turns evidence into owner and IT language. | Local or OpenAI-compatible LLM prompts. |
+| Decision surface | Shows the agent recommendation and asks for human judgment when needed. | Dashboard, LINE, Slack, Telegram, and email notifications. |
+| Response capability | Executes approved containment or remediation. | Wazuh Active Response for block/unblock and isolate/release. |
 
 ## Start Here
 
@@ -37,13 +68,13 @@ is not the main owner-facing installation flow.
 
 ## What This Repository Contains
 
-This repository has three separate parts:
+This repository has three main runtime parts plus optional tooling:
 
 | Path | Purpose |
 |------|---------|
-| `wazuh-llm-bridge/` | The main EdgeSec-Pi service. FastAPI receives Wazuh alerts, calls a local LLM, stores results in SQLite, renders the dashboard, and sends Slack messages. |
+| `wazuh-llm-bridge/` | The main EdgeSec-Pi service. FastAPI receives Wazuh alerts, applies deterministic routing/suppression, calls a local LLM, stores results in SQLite, exposes Dashboard APIs, sends notifications, and gates response actions. |
+| `dashboard/` | The Next.js management UI for first-time setup, alert review, MCP investigation, endpoint inventory, detection presets, notification settings, and self-tests. |
 | `wazuh-stack/` | A local Wazuh single-node lab stack for demo and testing. Use this when you do not already have Wazuh running. |
-| `dashboard/README.md` | Dashboard development notes, including the UI design policy. Material Design is a reference for consistency and accessibility, not a mandatory visual system. |
 | `INSTALL.md` / `INSTALL.en.md` | Complete from-zero installation guides in Traditional Chinese and English for the main Dashboard / Wazuh / Agent / notification flow. |
 | `install.sh` / `SETUP_GUIDE.md` | Optional LobeChat + Wazuh MCP Server flow. This is not required for the main Slack/dashboard pipeline. |
 
@@ -53,28 +84,35 @@ If you already have a Wazuh manager, you usually only need
 ## Architecture
 
 ```text
-Wazuh agents
+Event sources (Wazuh Alert first)
     |
     v
-Wazuh Manager / Integrator
+Source adapter / Wazuh Manager Integrator
     |
     | POST /webhook
     v
 EdgeSec-Pi bridge
     |
     +--> async queue + workers
+    +--> canonical signal normalization
+    +--> false-positive suppression + detection-category routing
+    +--> evidence lookup through source capabilities
     +--> local LLM via LM Studio
+    +--> optional MCP investigation (playbook first, tool-loop deep path second)
     +--> SQLite alert history
-    +--> owner dashboard (dashboard/ Next.js app)
+    +--> agent recommendation dashboard (dashboard/ Next.js app)
     +--> LINE / Slack / Telegram / email notification
-    +--> optional response buttons
+    +--> optional human-approved response actions
 
 Owner: reads the EdgeSec-Pi dashboard and notification summaries.
-IT: investigates raw events in Wazuh Dashboard when needed.
+IT: investigates raw events in the source system when needed.
 ```
 
-Wazuh remains the source of detection truth. EdgeSec-Pi adds the communication
-and response layer on top of it.
+Wazuh Alert remains the first event source of truth. Wazuh MCP/API and Active
+Response are capabilities around that source, used for evidence lookup and
+controlled response. EdgeSec-Pi keeps the higher-level agent boundary: source
+input, evidence, playbook decision, LLM explanation, human approval, and
+controlled response.
 
 ## Main Features
 
@@ -88,25 +126,34 @@ and response layer on top of it.
 | Dashboard | `http://127.0.0.1:3000` shows owner-facing risk state, important events, and system health. |
 | Notifications | LINE, Slack, Telegram, or email. Slack Bot Token + Socket Mode enables interactive buttons when configured. |
 | Persistence | SQLite-backed alert history with `/alerts`, `/stats`, and `/status` APIs. |
-| Optional response | Wazuh Active Response helpers for IP block/unblock workflows. Endpoint isolation is pluggable and requires a tested agent-side script. |
+| Investigation | Dashboard "MCP 查證" uses deterministic fast playbooks when possible, then a restricted tool loop for deeper Wazuh MCP questions. |
+| Wazuh signal controls | Wazuh Alert detection-category presets (`conservative`, `recommended`, `expanded`) plus noisy-category warnings and bridge-level false-positive suppression. |
+| Setup checks | Owner-facing self-test verifies bridge, AI, Wazuh, notification settings, agent-groups, and recent module event flow. |
+| Optional response | Wazuh Active Response helpers for IP block/unblock and endpoint isolate/release workflows, guarded by TTL, audit rows, allow/deny policy, and human approval. |
 
 ## Recommended Owner Flow
 
 For a non-technical company owner, the installation should be operated from the
 Dashboard in this order:
 
-1. **Set up notifications** - LINE, Slack, Telegram, or email. At least one
+1. **Open First-time Setup** - use `/settings/setup` as the non-technical
+   checklist instead of terminal logs.
+2. **Connect Wazuh** - connect an existing Wazuh Manager, or use the bundled
+   Wazuh lab stack for a local pilot.
+3. **Set up AI analysis** - point the bridge at LM Studio or another
+   OpenAI-compatible endpoint and verify the configured model.
+4. **Set up notifications** - LINE, Slack, Telegram, or email. At least one
    channel must send a successful test message.
-2. **Install or connect Wazuh** - connect an existing Wazuh Manager, or use the
-   bundled Wazuh lab stack for a local pilot.
-3. **Install endpoint agents** - download the OS-specific Wazuh agent from the
+5. **Install endpoint agents** - download the OS-specific Wazuh agent from the
    Dashboard, then verify the endpoint appears online.
-4. **Fill endpoint business context** - add who uses the computer, what process
+6. **Enable detection hardening carefully** - agent-groups prove deployment and
+   assignment; recent module event flow is the second evidence layer. Group
+   membership alone does not prove Sysmon/FIM/SCA/VT/YARA are emitting events.
+7. **Fill endpoint business context** - add who uses the computer, what process
    it supports, business hours, and impact level. This helps the LLM explain
    alerts in business language.
-5. **Wait for notifications** - review alerts in the Dashboard or notification
-   channel; use Wazuh Dashboard / MCP only when deeper IT investigation is
-   needed.
+8. **Run a test alert** - confirm Dashboard history, AI wording, and the chosen
+   notification channel all receive the same event.
 
 MCP and LobeChat are intentionally not part of this owner flow. They are
 advanced investigation tools for IT or an outsourced security partner.
@@ -216,6 +263,19 @@ can verify the full Wazuh -> bridge -> dashboard/Slack path.
 
 ## Connect an Existing Wazuh Manager
 
+EdgeSec-Pi treats Wazuh Alert as the first event source, not as a fixed
+deployment shape. The Wazuh source has three installation modes:
+
+| Mode | Use when | Customer input |
+|------|----------|----------------|
+| `managed` | EdgeSec runs Wazuh for the customer. | No Wazuh host/key from the owner; platform provisioning creates and stores them. |
+| `existing` | The customer already has Wazuh, either cloud-hosted or self-hosted. | Wazuh Manager URL, Indexer URL, and service credentials/token. |
+| `local_lab` | Demo, PoC, or engineering validation. | Local Docker Wazuh defaults plus lab credentials. |
+
+Only `existing` and `local_lab` are implemented in this repository today.
+`managed` is a clean product boundary for future cloud provisioning, not a
+pretend local setup.
+
 For the complete existing-Wazuh procedure, use
 [INSTALL.md](INSTALL.md#b-正式部署版接到既有-wazuh).
 
@@ -254,12 +314,19 @@ and use that address instead.
 | `GET /alerts` | Recent stored alerts. |
 | `GET /stats` | Alert counts and severity breakdown. |
 | `GET /status` | Bridge dependency and service status. |
+| `GET /api/dashboard/service-status` | Owner-facing readiness checks for Dashboard setup. |
+| `GET /api/dashboard/summary` | Dashboard landing-page summary. |
+| `POST /api/dashboard/investigation/chat` | MCP-backed owner/IT investigation chat. |
+| `GET/PUT /api/dashboard/detection-categories` | Detection-category preset and noise settings. |
+| `GET/PUT /api/dashboard/notifications/*` | Notification settings and channel tests. |
+| `GET/PUT /api/dashboard/wazuh-settings` | Wazuh Manager/Indexer settings and connection tests. |
 | `POST /webhook` | Wazuh alert intake endpoint. |
+| `POST /active-response/*` | Token-gated block/unblock/isolate/release actions. |
 
 FastAPI's generated docs are available at:
 
 ```text
-http://localhost:$BRIDGE_PORT/docs
+https://localhost:$BRIDGE_PORT/docs
 ```
 
 For non-technical owners, use the self-test button in the Dashboard. It reports
@@ -279,9 +346,26 @@ terminal output or raw service logs.
   response actions.
 - Start response actions in review-only mode before enabling destructive
   actions such as firewall block.
+- LLM prompts treat raw log fields as untrusted data. Keep deterministic
+  guardrails and human approval in front of severity escalation and destructive
+  actions.
+- Marking an alert false-positive creates a short-lived, scoped suppression
+  rule. This reduces repeated noise, but suppression rules must stay visible and
+  removable from the Dashboard.
+- Firewall blocks are tracked with a TTL and a background sweeper attempts to
+  remove them when they expire. TTL accuracy is approximately the configured
+  sweep interval, so a block can remain for up to one extra sweep cycle. Failed
+  unblock attempts retry with bounded backoff before being marked for manual IT
+  cleanup. For non-local agents, set `WAZUH_UNBLOCK_COMMAND` after installing a
+  tested agent-side unblock script.
 - Wazuh does not include a universal endpoint-isolation command. If you expose
   the `隔離端點` Slack action, install and test an agent-side isolation script
-  first, then set `WAZUH_ISOLATE_COMMAND`.
+  first, then set both `WAZUH_ISOLATE_COMMAND` and
+  `WAZUH_RELEASE_ISOLATION_COMMAND`. Enable only platforms listed in
+  `ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS` after real-machine testing.
+- Wazuh agent-groups are deployment evidence, not detection proof. The Dashboard
+  separately checks recent module event flow so the UI does not imply
+  Sysmon/FIM/SCA/VT/YARA are active merely because a group was assigned.
 
 ## Testing
 
@@ -315,6 +399,9 @@ or experimental.
 - [INSTALL.md](INSTALL.md) / [INSTALL.en.md](INSTALL.en.md) - complete installation guide
 - [TESTING.md](TESTING.md) - test strategy and commands
 - [RELEASE_READINESS.md](RELEASE_READINESS.md) - release positioning and preflight checks
+- [docs/architecture/CURRENT_ARCHITECTURE.md](docs/architecture/CURRENT_ARCHITECTURE.md) - current Wazuh-first architecture and ownership boundaries
+- [docs/architecture/MULTI_SOURCE_MDR.md](docs/architecture/MULTI_SOURCE_MDR.md) - long-term multi-source MDR architecture direction
+- [wazuh-stack/active-response/README.md](wazuh-stack/active-response/README.md) - optional endpoint isolate/release scripts
 - [SETUP_GUIDE.md](SETUP_GUIDE.md) - optional LobeChat + Wazuh MCP Server setup
 - [PARTNER_BRIEF.md](PARTNER_BRIEF.md) - business-facing partner brief
 

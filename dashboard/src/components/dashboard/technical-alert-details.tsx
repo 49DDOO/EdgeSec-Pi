@@ -6,6 +6,25 @@ function valueOrDash(value?: string | number) {
   return value ? String(value) : "-";
 }
 
+function compactIp(value?: string) {
+  const ip = String(value || "").trim();
+  if (!ip) return "";
+  if (/^(?:0{1,4}:){7}0*1$/i.test(ip)) return "::1";
+  if (/^(?:0{1,4}:){7}0*0$/i.test(ip)) return "::";
+  return ip.replace(/\b0{1,3}([0-9a-f]{1,3})\b/gi, "$1");
+}
+
+function isLoopbackIp(value?: string) {
+  const ip = compactIp(value).toLowerCase();
+  return ip === "127.0.0.1" || ip === "::1" || ip === "localhost";
+}
+
+function sourceIpItem(value?: string): [string, string] {
+  if (!value) return ["來源 IP", ""];
+  if (isLoopbackIp(value)) return ["本機位址", `${compactIp(value)}（不是外部來源）`];
+  return ["來源 IP", compactIp(value)];
+}
+
 function splitActionLines(text?: string) {
   return String(text || "")
     .split(/\n+/)
@@ -19,12 +38,13 @@ function evidenceItems(alert: Alert) {
     const indicators = evidence.indicators || {};
     const endpoint = evidence.endpoint || {};
     const rule = evidence.rule || {};
+    const sourceIp = indicators.source_ip || alert.source_ip || "";
     const items = [
       ["SIEM", evidence.source || alert.siem_source || "Wazuh"],
       ["模組", moduleLabel(evidence.module)],
       ["Rule", `${valueOrDash(rule.id)}${rule.level ? ` / level ${rule.level}` : ""}`],
-      ["電腦", `${endpoint.name || alert.agent_name}${endpoint.ip ? ` / ${endpoint.ip}` : ""}`],
-      ["來源 IP", indicators.source_ip || alert.source_ip || ""],
+      ["端點", `${endpoint.name || alert.agent_name}${endpoint.ip ? ` / ${endpoint.ip}` : ""}`],
+      sourceIpItem(sourceIp),
       ["帳號", indicators.username || ""],
       ["檔案", indicators.file_path || ""],
       ["程序", indicators.process || ""],
@@ -38,8 +58,8 @@ function evidenceItems(alert: Alert) {
   const items = [
     ["SIEM", alert.siem_source || "Wazuh"],
     ["Rule", `${valueOrDash(alert.rule_id)}${alert.rule_level ? ` / level ${alert.rule_level}` : ""}`],
-    ["電腦", `${alert.agent_name}${alert.agent_ip ? ` / ${alert.agent_ip}` : ""}`],
-    ["來源 IP", alert.source_ip || ""],
+    ["端點", `${alert.agent_name}${alert.agent_ip ? ` / ${alert.agent_ip}` : ""}`],
+    sourceIpItem(alert.source_ip || ""),
     ["MITRE", alert.mitre || ""],
   ];
   return items.filter(([, value]) => value && value !== "-");
@@ -50,13 +70,13 @@ function moduleLabel(module?: string) {
     authentication: "登入 / 帳號",
     sca: "安全設定檢查",
     fim: "檔案異動",
-    vulnerability: "漏洞偵測",
+    vulnerability: "漏洞訊號",
     rootcheck: "Rootcheck",
     syscollector: "系統盤點",
     windows: "Windows 事件",
-    other: "一般告警",
+    other: "一般事件",
   };
-  return labels[module || ""] || module || "一般告警";
+  return labels[module || ""] || module || "一般事件";
 }
 
 function remediationText(alert: Alert) {
@@ -78,7 +98,7 @@ function iocValues(alert: Alert) {
     indicators?.file_path,
     ...(indicators?.hashes || []),
     ...(alert.iocs || []),
-  ].filter((value, index, arr): value is string => Boolean(value) && arr.indexOf(value) === index);
+  ].filter((value, index, arr): value is string => Boolean(value) && !isLoopbackIp(value) && arr.indexOf(value) === index);
 }
 
 function ModuleContext({ evidence }: { evidence?: TechnicalEvidence }) {
@@ -121,6 +141,91 @@ function ModuleContext({ evidence }: { evidence?: TechnicalEvidence }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function FimBrief({ evidence, alert }: { evidence?: TechnicalEvidence; alert: Alert }) {
+  const brief = evidence?.fim_brief;
+  if (!brief) return null;
+  const endpoint = evidence?.endpoint;
+  const before = Object.entries(brief.hash_before || {});
+  const after = Object.entries(brief.hash_after || {});
+  return (
+    <div className="mb-3 rounded-md border bg-background p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">檔案異動簡報</p>
+          <p className="mt-1 text-sm font-semibold">{brief.title_zh}</p>
+        </div>
+        <Badge variant={brief.severity === "high" ? "destructive" : "secondary"}>
+          {brief.severity === "high" ? "高" : brief.severity === "medium" ? "中" : "低"}
+        </Badge>
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">受影響端點</p>
+          <p className="text-xs">
+            {endpoint?.name || alert.agent_name || "-"}
+            {endpoint?.ip || alert.agent_ip ? ` / ${endpoint?.ip || alert.agent_ip}` : ""}
+          </p>
+          {alert.purpose && <p className="mt-1 text-xs text-muted-foreground">用途：{alert.purpose}</p>}
+        </div>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">誰改了什麼</p>
+          <p className="break-words font-mono text-xs">{brief.file_path}</p>
+          <p className="mt-1 text-xs">
+            {brief.event_zh}；使用者：{brief.changed_by}；程序：{brief.process}
+          </p>
+          {brief.changed_at && <p className="text-xs text-muted-foreground">時間：{brief.changed_at}</p>}
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">影響多大</p>
+          <p className="text-xs">{brief.business_meaning_zh}</p>
+          <p className="mt-1 text-xs">{brief.impact_zh}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">立刻該做的事</p>
+          <ol className="mt-1 list-decimal space-y-1 pl-4 text-xs">
+            {brief.recommended_steps_zh.slice(0, 3).map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      </div>
+
+      {(before.length > 0 || after.length > 0 || brief.it_checks.length > 0) && (
+        <div className="mt-3 border-t pt-3">
+          <p className="text-xs font-medium text-muted-foreground">技術細節</p>
+          <div className="mt-2 grid gap-3 md:grid-cols-2">
+            {(before.length > 0 || after.length > 0) && (
+              <div className="space-y-1">
+                {before.map(([kind, value]) => (
+                  <p key={`before-${kind}`} className="break-words font-mono text-xs">
+                    修改前 {kind}：{value}
+                  </p>
+                ))}
+                {after.map(([kind, value]) => (
+                  <p key={`after-${kind}`} className="break-words font-mono text-xs">
+                    修改後 {kind}：{value}
+                  </p>
+                ))}
+              </div>
+            )}
+            {brief.it_checks.length > 0 && (
+              <ul className="list-disc space-y-1 pl-4 text-xs">
+                {brief.it_checks.slice(0, 4).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -200,6 +305,13 @@ export function TechnicalAlertDetails({ alert, compact = false }: { alert: Alert
         )}
       </div>
 
+      {alert.investigation_summary_zh && (
+        <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-3">
+          <p className="text-xs font-medium text-primary">AI 調查說明</p>
+          <p className="mt-1 text-sm leading-6">{alert.investigation_summary_zh}</p>
+        </div>
+      )}
+
       {actionLines.length > 0 && (
         <div className="mb-3 rounded-md border bg-background p-3">
           <p className="text-xs font-medium text-muted-foreground">建議處理步驟</p>
@@ -210,6 +322,8 @@ export function TechnicalAlertDetails({ alert, compact = false }: { alert: Alert
           </ol>
         </div>
       )}
+
+      <FimBrief evidence={alert.technical_evidence} alert={alert} />
 
       <ModuleContext evidence={alert.technical_evidence} />
 

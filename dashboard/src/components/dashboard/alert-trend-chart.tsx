@@ -53,7 +53,7 @@ function EndpointTrendTooltip({
   return (
     <div className="rounded-lg border bg-popover p-3 text-sm shadow-md">
       <div className="font-medium">{label}</div>
-      <div className="mt-1 text-muted-foreground">總告警 {Number(item.total || 0)} 件</div>
+      <div className="mt-1 text-muted-foreground">總事件 {Number(item.total || 0)} 件</div>
       {rows.length > 0 ? (
         <div className="mt-2 grid grid-cols-[auto_auto] gap-x-5 gap-y-1">
           {rows.map(([name, value]) => (
@@ -64,7 +64,7 @@ function EndpointTrendTooltip({
           ))}
         </div>
       ) : (
-        <div className="mt-2 text-muted-foreground">當天沒有設備告警</div>
+        <div className="mt-2 text-muted-foreground">當天沒有端點事件</div>
       )}
     </div>
   );
@@ -119,7 +119,7 @@ export function AlertTrendChart({ data, selectedEndpoint = "all" }: AlertTrendCh
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div>
-          <CardTitle>設備告警趨勢</CardTitle>
+          <CardTitle>端點事件趨勢</CardTitle>
           <CardDescription>
             過去 {data.length || 7} 天共 {total} 件，{activeDays} 天有事件
             {topEndpoint && topEndpoint[1] > 0
@@ -144,7 +144,7 @@ export function AlertTrendChart({ data, selectedEndpoint = "all" }: AlertTrendCh
       {expanded && (
         <CardContent>
           <div className="mb-3 text-sm text-muted-foreground">
-            每條線代表一台設備每天被通報的告警數；端點篩選會同步改變這張圖。
+            每條線代表一台端點每天被通報的事件數；端點篩選會同步改變這張圖。
           </div>
           {series.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground">
@@ -198,11 +198,11 @@ export function AlertTrendChart({ data, selectedEndpoint = "all" }: AlertTrendCh
             </LineChart>
           </ChartContainer>
           {total === 0 && (
-            <p className="mt-3 text-sm text-muted-foreground">這段時間沒有設備告警。</p>
+            <p className="mt-3 text-sm text-muted-foreground">這段時間沒有端點事件。</p>
           )}
           {selectedEndpoint === "all" && endpointTotals.length > visibleEndpoints.length && (
             <p className="mt-3 text-xs text-muted-foreground">
-              為了保持圖表可讀性，只顯示告警最多的前 {visibleEndpoints.length} 台設備；可用上方端點篩選查看單一設備。
+              為了保持圖表可讀性，只顯示事件最多的前 {visibleEndpoints.length} 台端點；可用上方端點篩選查看單一端點。
             </p>
           )}
         </CardContent>

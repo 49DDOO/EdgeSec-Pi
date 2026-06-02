@@ -17,10 +17,12 @@ python3 -m pip install -r requirements-dev.txt
 
 This runs:
 
-- `tests/unit` - config and packaging contracts.
+- `tests/unit` - config, safety policy, prompt ownership, dashboard contracts,
+  response lifecycle, false-positive suppression, detection settings, and
+  module event-flow checks.
 - `tests/integration` - fake LM Studio, fake Wazuh MCP Server, bridge queue,
   SQLite persistence, back-pressure, MCP token refresh, enrichment, and
-  agentic loop behavior.
+  shared tool-loop behavior.
 
 It does not require Docker, real Wazuh, real LM Studio, or Slack.
 
@@ -106,9 +108,9 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 RUN_MODEL_TESTS=1 python3 -m pytest -m model te
 
 This checks the real services configured by `bridge.env`:
 
-- `http://localhost:$BRIDGE_PORT/health`
+- `$BRIDGE_LOCAL_BASE/health` as derived by `scripts/lib/load-config.sh`
 - `http://127.0.0.1:3000`
-- `http://localhost:$BRIDGE_PORT/docs`
+- `$BRIDGE_LOCAL_BASE/docs`
 - LM Studio `/v1/models` derived from `LM_STUDIO_URL`
 - Wazuh API from `WAZUH_API_URL` when available
 - MCP `/health` from `MCP_SERVER_URL` when configured
@@ -133,6 +135,17 @@ GET /self-test
 This endpoint returns Traditional Chinese status and next-step guidance for
 owners. It does not inject fake Wazuh alerts and does not send Slack messages;
 it only checks service readiness and recent alert data.
+
+The self-test deliberately separates:
+
+- `wazuh_hardening` - whether Wazuh agent-groups exist and online agents have
+  the expected OS group.
+- `wazuh_module_flow` - whether recent SQLite alert history contains module
+  events such as FIM, SCA, Sysmon, VirusTotal, YARA, Rootcheck, or
+  Syscollector.
+
+This prevents a false green state where the UI says "hardened" just because
+groups exist even though no module events are flowing.
 
 ## Manual / E2E Tests
 
@@ -161,6 +174,14 @@ services and human verification.
 - MCP `/auth/token` exchange works.
 - MCP `401` responses trigger JWT refresh.
 - MCP enrichment is injected only when a source IP exists.
-- The agentic loop can call tools and submit a final verdict.
-- The agentic loop records evidence and degrades when tool calls fail.
+- The shared tool loop can call tools, finish, time out, and stop at max turns.
+- The automated investigation and Dashboard investigation paths use the shared
+  tool loop instead of maintaining separate loop engines.
+- The investigation path records evidence and degrades when tool calls fail.
 - Triage router force/never policy is deterministic.
+- Detection presets refuse configurations that disable every core signal.
+- Marking alerts false-positive creates scoped suppressions, and matching
+  future alerts can skip another LLM call.
+- Active Response block/isolate lifecycle state records TTLs, retries, release
+  paths, and manual cleanup states.
+- Setup checks distinguish agent-group deployment from module event flow.

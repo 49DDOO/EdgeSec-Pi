@@ -11,7 +11,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ThemeToggle } from "@/components/dashboard/theme-toggle";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -174,26 +174,17 @@ export default function StatusPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-            <ServerCog className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold">系統狀態</h1>
-            <p className="text-sm text-muted-foreground">
-              檢查告警接收、AI 分析、Wazuh、進階查詢與通知是否可用
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        icon={ServerCog}
+        title="系統狀態"
+        description="檢查資料來源、事件接收、AI 分析、證據查詢與通知是否可用"
+        actions={
           <Button variant="outline" onClick={() => loadStatus(true)} disabled={loading}>
             <RefreshCw data-icon="inline-start" className={cn(loading && "animate-spin")} />
             重新整理
           </Button>
-          <ThemeToggle />
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BrainCircuit, Save, TestTube, KeyRound } from "lucide-react";
 import { toast } from "sonner";
-import { ThemeToggle } from "@/components/dashboard/theme-toggle";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -139,7 +139,7 @@ export default function AiModelSettingsPage() {
       const next = await saveAiSettings({ enabled });
       setSettings(next);
       setDraft((current) => (current ? { ...current, enabled: next.enabled } : current));
-      toast.success(next.enabled ? "新告警會送 AI 解析" : "新告警已停止送 AI 解析");
+      toast.success(next.enabled ? "新事件會送 AI 解析" : "新事件已停止送 AI 解析");
     } catch (error) {
       toast.error("更新 AI 解析狀態失敗", {
         description: error instanceof Error ? error.message : String(error),
@@ -236,22 +236,11 @@ export default function AiModelSettingsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-            <BrainCircuit className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold">AI模型設定</h1>
-            <p className="text-sm text-muted-foreground">
-              分開儲存模型設定與切換目前使用模型，避免誤切到尚未設定的供應商。
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <ThemeToggle />
-        </div>
-      </header>
+      <PageHeader
+        icon={BrainCircuit}
+        title="AI 模型設定"
+        description="分開儲存模型設定與切換目前使用模型，避免誤切到尚未設定的供應商。"
+      />
 
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
@@ -259,7 +248,7 @@ export default function AiModelSettingsPage() {
             <CardHeader>
               <CardTitle>目前生效模型</CardTitle>
               <CardDescription>
-                新進 Wazuh 告警只會送到目前生效的模型；點選下方卡片只是切換編輯表單。
+                新進安全事件只會送到目前生效的模型；切換後立即套用，不需要重新啟動。
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 text-sm md:grid-cols-[1fr_320px]">
@@ -276,7 +265,7 @@ export default function AiModelSettingsPage() {
               <div>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-muted-foreground">新告警送 AI 解析</div>
+                    <div className="text-muted-foreground">新事件送 AI 解析</div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       關閉時仍保存原始 Log，但不呼叫模型。
                     </p>
@@ -285,7 +274,7 @@ export default function AiModelSettingsPage() {
                     checked={settings?.enabled ?? false}
                     onCheckedChange={(value) => void handleToggleAiEnabled(Boolean(value))}
                     disabled={loading || savingEnabled}
-                    aria-label="新告警送 AI 解析"
+                    aria-label="新事件送 AI 解析"
                   />
                 </div>
               </div>

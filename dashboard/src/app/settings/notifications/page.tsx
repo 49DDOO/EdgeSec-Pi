@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bell, Mail, MessageCircle, RefreshCw, Save, Send, TestTube } from "lucide-react";
+import { Bell, Loader2, Mail, MessageCircle, RefreshCw, Save, Send, TestTube } from "lucide-react";
 import { toast } from "sonner";
-import { ThemeToggle } from "@/components/dashboard/theme-toggle";
+import { PageHeader } from "@/components/dashboard/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   fetchNotificationSettings,
   saveNotificationSettings,
+  sendSlackAiBridgeTest,
+  sendSlackDigestTest,
   testNotificationChannel,
   type NotificationChannelStatus,
   type NotificationSettingsResponse,
@@ -155,6 +157,8 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<ChannelKey | null>(null);
   const [testing, setTesting] = useState<ChannelKey | null>(null);
+  const [sendingDigestTest, setSendingDigestTest] = useState(false);
+  const [sendingAiBridgeTest, setSendingAiBridgeTest] = useState(false);
 
   const activeStatus = settings?.channels[active];
   const configuredCount = useMemo(
@@ -234,28 +238,51 @@ export default function NotificationsPage() {
     }
   }
 
+  async function handleAiBridgeTestAlert() {
+    setSendingAiBridgeTest(true);
+    try {
+      const result = await sendSlackAiBridgeTest();
+      toast.success("AI Bridge 測試事件已送出", {
+        description: result.message || "請確認 Slack 是否收到正式事件卡片",
+      });
+    } catch (error) {
+      toast.error("送出 AI Bridge 測試事件失敗", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSendingAiBridgeTest(false);
+    }
+  }
+
+  async function handleDigestTest() {
+    setSendingDigestTest(true);
+    try {
+      const result = await sendSlackDigestTest();
+      toast.success("AI Bridge 每日狀態檢查已送出", {
+        description: result.message || "請確認 Slack 是否收到每日資安狀態檢查",
+      });
+    } catch (error) {
+      toast.error("送出每日狀態檢查失敗", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setSendingDigestTest(false);
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-            <Bell className="size-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold">通知設定</h1>
-            <p className="text-sm text-muted-foreground">
-              先測通至少一個通知管道，再開始等告警
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        icon={Bell}
+        title="通知設定"
+        description="先測通至少一個通知管道，再開始等事件"
+        actions={
           <Button variant="outline" onClick={loadSettings} disabled={loading}>
             <RefreshCw data-icon="inline-start" />
             重新整理
           </Button>
-          <ThemeToggle />
-        </div>
-      </header>
+        }
+      />
 
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
@@ -361,6 +388,34 @@ export default function NotificationsPage() {
                           <TestTube data-icon="inline-start" />
                           {testing === key ? "測試中..." : `測試 ${label}`}
                         </Button>
+                        {key === "slack" && (
+                          <>
+                            <Button
+                              variant="outline"
+                              onClick={handleDigestTest}
+                              disabled={sendingDigestTest || !status?.fields.SLACK_WEBHOOK_URL?.configured}
+                            >
+                              {sendingDigestTest ? (
+                                <Loader2 data-icon="inline-start" className="animate-spin" />
+                              ) : (
+                                <Send data-icon="inline-start" />
+                              )}
+                              {sendingDigestTest ? "送出中..." : "發送 AI Bridge 每日檢查"}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={handleAiBridgeTestAlert}
+                              disabled={sendingAiBridgeTest || !status?.configured}
+                            >
+                              {sendingAiBridgeTest ? (
+                                <Loader2 data-icon="inline-start" className="animate-spin" />
+                              ) : (
+                                <Send data-icon="inline-start" />
+                              )}
+                              {sendingAiBridgeTest ? "送出中..." : "發送事件卡"}
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
