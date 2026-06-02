@@ -1,7 +1,37 @@
 # Wazuh → LM Studio Bridge
 
-A minimal async FastAPI webhook that takes Wazuh alerts, extracts
-`rule.description` + `full_log`, and asks a local LM Studio model to triage them.
+The bridge is the backend for EdgeSec-Pi. It receives Wazuh alerts, keeps the
+webhook fast with an async queue, runs deterministic policy before any LLM call,
+asks a local OpenAI-compatible model for owner-readable triage, stores evidence
+in SQLite, powers the Dashboard API, sends notifications, and gates controlled
+Active Response actions.
+
+It is intentionally not a Wazuh distribution and not an autonomous SOAR. Wazuh
+remains the detection source of truth; the bridge is the explanation,
+investigation, and human-approved response layer.
+
+## Current Data Flow
+
+```text
+Wazuh Integrator
+  → POST /webhook
+  → bounded asyncio.Queue
+  → worker
+  → false-positive suppression check
+  → detection-category routing
+  → Stage-1 LLM triage
+  → optional MCP investigation
+      → fast deterministic playbook when possible
+      → shared tool_loop deep path when needed
+  → SQLite alert/case history
+  → Dashboard API + notifications
+  → optional token-gated Active Response
+```
+
+The LLM writes owner-facing Traditional Chinese fields (`summary_zh`,
+`impact_zh`, `next_step_zh`) plus IT fields (`root_cause`, `action`, `mitre`,
+`iocs`). Raw logs, usernames, command lines, and other attacker-controlled
+fields are treated as untrusted data in prompts.
 
 ## Why async?
 
@@ -15,6 +45,32 @@ This service:
    LM Studio in parallel.
 3. The queue is **bounded** — when it fills up the webhook returns `503` so
    Wazuh re-queues on its side instead of the host OOM-ing.
+
+## Module Layout
+
+| Module | Responsibility |
+|--------|----------------|
+| `app.py` | FastAPI app wiring, startup/shutdown, queue workers, and router registration. |
+| `webhook_api.py` | Wazuh alert intake and webhook bearer-secret validation. |
+| `ops_api.py` | Dashboard API facade for alerts, summary, endpoints, detection categories, AI settings, investigation chat, and self-test. |
+| `dashboard_notifications_api.py` | Notification settings and test-send endpoints. |
+| `dashboard_sample_data_api.py` | Built-in sample/test alert replay. |
+| `dashboard_wazuh_settings_api.py` | Wazuh Manager/Indexer settings and connection checks. |
+| `db.py` | SQLite alerts, case status, false-positive suppressions, trends, and module event-flow checks. |
+| `detection_settings.py` | Detection presets, category filtering, noisy-category warnings, and lightweight skip verdicts. |
+| `prompting.py`, `investigation_prompting.py`, `prompt_safety.py` | LLM prompt ownership, MCP evidence formatting, and untrusted-data isolation. |
+| `triage_router.py` | Deterministic routing into quick triage or deep investigation. |
+| `tool_loop.py` | Shared OpenAI-compatible tool-call loop engine. |
+| `agent_loop.py` | Automated deep investigation path for escalated alerts. |
+| `investigation_chat.py` | Dashboard MCP investigation entry point. |
+| `investigation_context.py`, `investigation_evidence.py`, `investigation_playbooks.py`, `investigation_rules.py`, `investigation_suggestions.py`, `investigation_tools.py` | Investigation helpers split by prompt context, evidence normalization, deterministic playbooks, Wazuh rule lookups, answer guardrails, and tool schemas. |
+| `active_response_api.py` | Token-gated block/unblock/isolate/release HTTP API. |
+| `active_response_safety.py` | Safety policy: blockable IP checks, protected networks, never-isolate agents, and isolation capability gates. |
+| `active_response_state.py` | SQLite lifecycle state for blocks and isolations, TTLs, retries, audit details. |
+| `active_response_lifecycle.py` | Background sweeper that expires blocks/isolations and retries cleanup. |
+| `wazuh.py` | Wazuh Manager API client for auth, agents, groups, and Active Response dispatch. |
+| `wazuh_hardening.py` | Verifies agent-groups deployment/assignment for setup. |
+| `self_test.py` | Owner-facing health checks, including service reachability, hardening, and module event flow. |
 
 ## Run
 
@@ -58,8 +114,9 @@ local CA whenever possible.
 set -a; source ../bridge.env; set +a
 curl -s "https://localhost:$BRIDGE_PORT/health"
 
-curl -s -X POST "http://localhost:$BRIDGE_PORT/webhook" \
+curl -ksS -X POST "https://localhost:$BRIDGE_PORT/webhook" \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $WEBHOOK_SECRET" \
   -d '{
     "rule": {"id": "5712", "level": 10, "description": "SSHD brute force"},
     "full_log": "Nov 24 12:00:01 host sshd[1234]: Failed password for root from 10.0.1.45 port 55512 ssh2"
@@ -72,8 +129,9 @@ curl -s -X POST "http://localhost:$BRIDGE_PORT/webhook" \
 ```bash
 set -a; source ../bridge.env; set +a
 for i in $(seq 1 200); do
-  curl -s -X POST "http://localhost:$BRIDGE_PORT/webhook" \
+  curl -ksS -X POST "https://localhost:$BRIDGE_PORT/webhook" \
     -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $WEBHOOK_SECRET" \
     -d "{\"rule\":{\"id\":\"$i\",\"level\":7,\"description\":\"test $i\"},\"full_log\":\"line $i\"}" \
     -o /dev/null -w "%{http_code}\n"
 done | sort | uniq -c
@@ -116,6 +174,38 @@ Restart wazuh-manager and tail `/var/ossec/logs/integrations.log`.
 | `QUEUE_MAXSIZE` | Burst tolerance vs. memory. 1000 alerts × few KB each ≈ a few MB. |
 | `LM_TIMEOUT_S` | Per-request timeout. Bump if your model is slow on long logs. |
 | `<level>` in ossec.conf | Cheapest filter — don't ship noise to the LLM at all. |
+| `FALSE_POSITIVE_SUPPRESSION_ENABLED` | When true, alerts marked false-positive create short-lived scoped suppressions. |
+| `FALSE_POSITIVE_SUPPRESSION_TTL_S` | Suppression lifetime; default is one week. |
+| `WAZUH_MODULE_FLOW_DAYS` | Window used by setup checks to confirm recent module event flow. |
+
+## Detection Hardening Checks
+
+The setup checklist separates deployment evidence from event-flow evidence:
+
+- `wazuh_hardening` checks Wazuh Manager groups (`default`, `macos`, `linux`,
+  `windows`) and whether online agents have the matching OS group.
+- `wazuh_module_flow` reads recent SQLite alerts and reports whether expected
+  modules such as FIM, SCA, Sysmon, VirusTotal, YARA, Rootcheck, or
+  Syscollector have actually produced events.
+
+This distinction is intentional. Agent-group assignment means the recipe was
+deployed; it does not prove every module is producing data.
+
+## Active Response Boundary
+
+Active Response is guarded in three layers:
+
+1. `ACTIVE_RESPONSE_TOKEN` gates the HTTP API.
+2. `remote_action_tokens.py` creates short-lived action tickets for Slack or
+   Dashboard approvals.
+3. `active_response_safety.py` validates the target before calling Wazuh or an
+   agent-side script.
+
+IP blocks are recorded with TTLs, retry metadata, and audit rows. Endpoint
+isolation requires both an isolate command and a release command. The bridge
+will not enable isolation for an OS unless it is listed in
+`ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS`, which should only happen after
+real-machine isolate/release/TTL testing.
 
 ## Remote action tokens
 
@@ -154,3 +244,6 @@ Slack, Dashboard, email approval links, and future mobile workflows.
   investigation.
 - Keep `.env`, `data/`, and logs out of git; copy examples from
   `.env.example` and `../bridge.env.example`.
+- Keep `./scripts/test.sh` as the default release gate. Real Wazuh, real LM
+  Studio model quality, and real endpoint isolation still need separate
+  environment or manual verification.

@@ -20,21 +20,22 @@ import logging
 import os
 import time
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
-import admin_token
+import ai_settings
 import org_profile
 import owner_context
 import remote_action_tokens
+import response_router
 import slack_actions
 
 log = logging.getLogger("wazuh-bridge")
 
 # Env-driven config read independently from app.py.
 LM_MODEL          = os.getenv("LM_MODEL", "local-model")
-BRIDGE_PUBLIC_URL = os.getenv("BRIDGE_PUBLIC_URL", "").rstrip("/")
+DASHBOARD_V2_URL  = os.getenv("DASHBOARD_V2_URL", "http://127.0.0.1:3000").rstrip("/")
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "").strip() or None
 SLACK_TIMEOUT_S   = float(os.getenv("SLACK_TIMEOUT_S", "10"))
 
@@ -80,6 +81,63 @@ def _slack_plain(text: str, limit: int = 130) -> str:
 def _is_sample_alert(alert: dict[str, Any]) -> bool:
     meta = alert.get("_edgesec") if isinstance(alert.get("_edgesec"), dict) else {}
     return alert.get("@sampledata") is True or bool(meta.get("sampledata"))
+
+
+def _agent_platform(alert: dict[str, Any]) -> str:
+    agent = alert.get("agent") if isinstance(alert.get("agent"), dict) else {}
+    os_info = agent.get("os") if isinstance(agent, dict) else {}
+    if isinstance(os_info, dict):
+        if platform := os_info.get("platform"):
+            return str(platform).strip()
+    for key in ("os_platform", "platform"):
+        if value := agent.get(key):
+            return str(value).strip()
+    return ""
+
+
+def _isolation_token_target(agent_name: str, platform: str) -> str:
+    return json.dumps(
+        {
+            "name": str(agent_name or ""),
+            "platform": str(platform or ""),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _dashboard_alert_url(alert: dict[str, Any]) -> str:
+    """Return a management Dashboard URL for this Slack card.
+
+    New alerts are posted to Slack before the SQLite row id is always known,
+    so the default is the alert list. If a future caller supplies a
+    dashboard_alert_id, the same helper becomes a direct deep-link.
+    """
+    if not DASHBOARD_V2_URL:
+        return ""
+    meta = alert.get("_edgesec") if isinstance(alert.get("_edgesec"), dict) else {}
+    alert_id = alert.get("dashboard_alert_id") or meta.get("dashboard_alert_id")
+    suffix = f"&alert={quote(str(alert_id))}" if alert_id else ""
+    return f"{DASHBOARD_V2_URL}/?tab=alerts{suffix}"
+
+
+def _build_dashboard_button(alert: dict[str, Any]) -> Optional[dict[str, Any]]:
+    url = _dashboard_alert_url(alert)
+    if not url:
+        return None
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": "查看 Dashboard"},
+        "url": url,
+    }
+
+
+def _active_model_label() -> str:
+    try:
+        settings = ai_settings.load()
+        return str(settings.get("model") or LM_MODEL)
+    except Exception:
+        return LM_MODEL
 
 
 def _format_evidence_lines(evidence: list[dict[str, Any]] | None) -> str:
@@ -144,6 +202,7 @@ def build_slack_payload(alert: dict[str, Any],
                     or parsed.get("action")
                     or "（LLM 未提供建議；請聯絡 IT 評估）")
     investigation_zh = (parsed.get("investigation_summary_zh") or "").strip()
+    model_label = _active_model_label()
 
     # Build the main body — what management reads first.
     # When the agentic loop ran, the 白話 investigation summary slots in
@@ -181,18 +240,19 @@ def build_slack_payload(alert: dict[str, Any],
                        "value": f"```{snippet}```",
                        "short": False})
 
-    return {
-        "attachments": [{
-            "color":     color,
-            "title":     f"{'🧪 ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
-            "pretext":   f"技術規則：{description}" if description else "",
-            "text":      main_text,
-            "fields":    fields,
-            "footer":    f"EdgeSec-Pi · Wazuh + {LM_MODEL} 自動分流",
-            "ts":        int(time.time()),
-            "mrkdwn_in": ["text", "fields", "pretext"],
-        }]
+    attachment = {
+        "color":     color,
+        "title":     f"{'🧪 ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
+        "pretext":   f"技術規則：{description}" if description else "",
+        "text":      main_text,
+        "fields":    fields,
+        "footer":    f"EdgeSec-Pi · Wazuh + {model_label} 自動分流",
+        "ts":        int(time.time()),
+        "mrkdwn_in": ["text", "fields", "pretext"],
     }
+    if dashboard_url := _dashboard_alert_url(alert):
+        attachment["title_link"] = dashboard_url
+    return {"attachments": [attachment]}
 
 
 def build_slack_blocks_payload(alert: dict[str, Any],
@@ -236,6 +296,7 @@ def build_slack_blocks_payload(alert: dict[str, Any],
     iocs_str    = ", ".join(f"`{i}`" for i in iocs) if iocs else "_(無)_"
     mitre       = parsed.get("mitre") or "—"
     full_log    = (alert.get("full_log") or "").strip()
+    model_label = _active_model_label()
 
     blocks: list[dict[str, Any]] = [
         {"type": "header",
@@ -314,7 +375,7 @@ def build_slack_blocks_payload(alert: dict[str, Any],
             "elements": [{"type": "mrkdwn",
                           "text": f"_🛠 技術細節 (for IT) — AI 工具呼叫紀錄_\n{ev_text[:2700]}"}]
         })
-    footer = f"EdgeSec-Pi · Wazuh + {LM_MODEL} 自動分流"
+    footer = f"EdgeSec-Pi · Wazuh + {model_label} 自動分流"
     if evidence:
         # Count actual tool calls (exclude the terminal submit_final_verdict)
         n_tools = sum(1 for e in evidence if e.get("tool") != "submit_final_verdict")
@@ -334,21 +395,15 @@ def _build_configure_agent_button(agent_name: str) -> Optional[dict[str, Any]]:
     Two visual states:
       • unprofiled → primary (blue) CTA "⚠️ 設定 <agent>"
       • profiled   → plain "查看 <agent> 設定"
-    Both go to /admin/quick-add with a short-lived signed token, so the
-    management user does not need to log in.
+    Both go to Dashboard v2's endpoint inventory, which is the maintained
+    owner-facing configuration surface.
     """
-    if not BRIDGE_PUBLIC_URL or not agent_name:
-        return None
-    try:
-        token = admin_token.sign(agent_name)
-    except Exception as e:                              # pragma: no cover
-        log.warning("admin token sign failed: %r", e)
+    if not agent_name:
         return None
 
     profiled = org_profile.is_profiled(agent_name)
-    from urllib.parse import quote, urlencode
-    qs = urlencode({"agent": agent_name, "t": token})
-    url = f"{BRIDGE_PUBLIC_URL}/admin/quick-add?{qs}"
+    qs = urlencode({"section": "inventory", "agent": agent_name})
+    url = f"{DASHBOARD_V2_URL}/settings/endpoints?{qs}"
 
     if profiled:
         return {
@@ -365,17 +420,9 @@ def _build_configure_agent_button(agent_name: str) -> Optional[dict[str, Any]]:
 
 
 def _action_ip_candidates(alert: dict[str, Any], parsed: Optional[dict[str, Any]]) -> list[str]:
-    """Return source IP candidates for emergency Slack actions."""
-    candidates: list[str] = []
-    for ip in slack_actions.extract_blockable_ips(parsed or {}):
-        candidates.append(ip)
-
-    data = alert.get("data") or {}
-    for key in ("srcip", "src_ip", "source_ip"):
-        ip = str(data.get(key) or "").strip()
-        if ip and ip not in candidates:
-            candidates.extend(slack_actions.extract_blockable_ips({"iocs": [ip]}))
-    return candidates
+    """Return deterministic source IP candidates for emergency Slack actions."""
+    decision = response_router.recommend(alert, parsed or {})
+    return list(decision.get("block_source_ips") or [])
 
 
 def _has_valid_wazuh_agent_id(agent_id: Any) -> bool:
@@ -383,19 +430,22 @@ def _has_valid_wazuh_agent_id(agent_id: Any) -> bool:
     return text.isdigit() and 3 <= len(text) <= 5
 
 
-def _emergency_help_block(has_ip: bool) -> dict[str, Any]:
+def _emergency_help_block(has_ip: bool, decision: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    reason = str((decision or {}).get("reason_zh") or "").strip()
     ip_text = (
         "*封鎖來源 IP*：擋住外部來源，不是關掉公司電腦。\n"
-        "*解除封鎖*：封錯或處理完成後才用，會恢復該來源連線。\n"
+        "*解除封鎖*：封鎖成功後才會顯示，避免誤解封非本系統封鎖的項目。\n"
         if has_ip
-        else "*封鎖來源 IP / 解除封鎖*：這則告警沒有來源 IP，所以不顯示這兩個動作。\n"
+        else "*封鎖來源 IP / 解除封鎖*：沒有安全可自動封鎖的外部來源，所以不顯示這兩個動作。\n"
     )
+    reason_text = f"*系統判斷*：{reason}\n" if reason else ""
     return {
         "type": "context",
         "elements": [{
             "type": "mrkdwn",
             "text": (
                 "*緊急處理按鈕說明*\n"
+                f"{reason_text}"
                 f"{ip_text}"
                 "*隔離端點*：暫停這台電腦連線，可能影響使用者工作；只在疑似中毒或外洩時使用。"
             ),
@@ -410,13 +460,26 @@ def _augment_with_action_buttons(payload: dict[str, Any],
     elements: list[dict[str, Any]] = []
     agent_name = (alert.get("agent") or {}).get("name", "")
     agent_id   = (alert.get("agent") or {}).get("id", "?")
-    action_ips = _action_ip_candidates(alert, parsed)
+    agent_platform = _agent_platform(alert)
+    decision = response_router.recommend(alert, parsed or {})
+    action_ips = list(decision.get("block_source_ips") or [])
     can_run_emergency_actions = (
         slack_actions.is_enabled()
         and not _is_sample_alert(alert)
         and _has_valid_wazuh_agent_id(agent_id)
     )
-    can_isolate_endpoint = can_run_emergency_actions and slack_actions.endpoint_isolation_enabled()
+    can_isolate_endpoint = (
+        can_run_emergency_actions
+        and bool(decision.get("allow_isolate_endpoint"))
+        and slack_actions.endpoint_isolation_enabled(
+            agent_platform,
+            agent_id=str(agent_id),
+            agent_name=str(agent_name),
+        )
+    )
+
+    if dashboard_btn := _build_dashboard_button(alert):
+        elements.append(dashboard_btn)
 
     # Emergency action buttons (bot mode only).
     # Skip sample data and non-Wazuh ids — Wazuh Active Response expects a
@@ -441,29 +504,17 @@ def _augment_with_action_buttons(payload: dict[str, Any],
                     "deny":    {"type": "plain_text", "text": "取消"},
                 },
             })
-            elements.append({
-                "type": "button",
-                "action_id": "unblock_ip",
-                "text": {"type": "plain_text", "text": "解除封鎖"},
-                "value": remote_action_tokens.issue("unblock_ip", agent_id, target=ip),
-                "confirm": {
-                    "title": {"type": "plain_text", "text": "確認解除封鎖？"},
-                    "text": {"type": "mrkdwn",
-                             "text": (
-                                 f"只有在確認 `{ip}` 封錯、或事件已處理完成時才使用。\n"
-                                 "按下後，這個來源會恢復連線能力。"
-                             )},
-                    "confirm": {"type": "plain_text", "text": "解除封鎖"},
-                    "deny": {"type": "plain_text", "text": "取消"},
-                },
-            })
         if can_isolate_endpoint:
             elements.append({
                 "type": "button",
                 "action_id": "isolate_endpoint",
                 "style": "danger",
                 "text": {"type": "plain_text", "text": "隔離端點"},
-                "value": remote_action_tokens.issue("isolate_endpoint", agent_id, target=agent_name),
+                "value": remote_action_tokens.issue(
+                    "isolate_endpoint",
+                    agent_id,
+                    target=_isolation_token_target(agent_name, agent_platform),
+                ),
                 "confirm": {
                     "title": {"type": "plain_text", "text": "確認隔離這台電腦？"},
                     "text": {"type": "mrkdwn",
@@ -489,7 +540,7 @@ def _augment_with_action_buttons(payload: dict[str, Any],
     att = payload["attachments"][0]
     blocks = att.get("blocks", [])
     if can_run_emergency_actions:
-        blocks.append(_emergency_help_block(bool(action_ips)))
+        blocks.append(_emergency_help_block(bool(action_ips), decision))
     att["blocks"] = blocks + [{"type": "actions", "elements": elements}]
     return payload
 
@@ -529,6 +580,7 @@ def build_quick_slack_payload(alert: dict[str, Any],
     next_step_zh = (parsed.get("next_step_zh")
                     or parsed.get("action")
                     or "（請聯絡 IT 評估）")
+    model_label = _active_model_label()
 
     body_lines = []
     if is_sample:
@@ -538,17 +590,18 @@ def build_quick_slack_payload(alert: dict[str, Any],
         body_lines += ["", f"📛 *不處理的後果*\n{impact_zh}"]
     body_lines += ["", f"🎯 *立刻該做的事*\n{next_step_zh}"]
 
-    return {
-        "attachments": [{
-            "color":     color,
-            "title":     f"{'🧪 ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
-            "pretext":   f"技術規則：{description}" if description else "",
-            "text":      "\n".join(body_lines),
-            "footer":    f"EdgeSec-Pi · Wazuh + {LM_MODEL} 快速分流",
-            "ts":        int(time.time()),
-            "mrkdwn_in": ["text", "title"],
-        }]
+    attachment = {
+        "color":     color,
+        "title":     f"{'🧪 ' if is_sample else ''}{emoji} 【{sev_zh}】{ctx['name']} 需要確認",
+        "pretext":   f"技術規則：{description}" if description else "",
+        "text":      "\n".join(body_lines),
+        "footer":    f"EdgeSec-Pi · Wazuh + {model_label} 快速分流",
+        "ts":        int(time.time()),
+        "mrkdwn_in": ["text", "title"],
     }
+    if dashboard_url := _dashboard_alert_url(alert):
+        attachment["title_link"] = dashboard_url
+    return {"attachments": [attachment]}
 
 
 def build_quick_slack_blocks_payload(alert: dict[str, Any],
@@ -577,6 +630,7 @@ def build_quick_slack_blocks_payload(alert: dict[str, Any],
     next_step_zh = (parsed.get("next_step_zh")
                     or parsed.get("action")
                     or "（請聯絡 IT 評估）")
+    model_label = _active_model_label()
 
     blocks: list[dict[str, Any]] = [
         {"type": "header",
@@ -609,7 +663,7 @@ def build_quick_slack_blocks_payload(alert: dict[str, Any],
     blocks.append({
         "type": "context",
         "elements": [{"type": "mrkdwn",
-                      "text": f"EdgeSec-Pi · Wazuh + {LM_MODEL} 快速分流"}]
+                      "text": f"EdgeSec-Pi · Wazuh + {model_label} 快速分流"}]
     })
 
     return {"attachments": [{"color": color, "blocks": blocks}]}

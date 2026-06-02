@@ -58,6 +58,7 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("EMAIL_FROM", "")
     monkeypatch.setenv("EMAIL_TO", "")
     monkeypatch.setenv("NOTIFICATION_SETTINGS_PATH", str(tmp_path / "notification_channels.json"))
+    monkeypatch.setenv("ORG_PROFILE_PATH", str(tmp_path / "org_profile.yaml"))
     monkeypatch.setenv("MCP_SERVER_URL", "")
     monkeypatch.setenv("MCP_API_KEY", "")
     monkeypatch.setenv("AGENTIC_FORCE_LEVEL_GTE", "99")
@@ -166,15 +167,10 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert health["queue_max"] == 5
                 assert health["workers"] == 1
 
-                test_slack_unauth = await client.post("/test-slack")
-                assert test_slack_unauth.status_code == 401
-                test_digest_unauth = await client.post("/test-digest")
-                assert test_digest_unauth.status_code == 401
-                test_slack_auth = await client.post(
-                    "/test-slack",
-                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                )
-                assert test_slack_auth.status_code == 400
+                assert (await client.get("/admin", follow_redirects=False)).status_code == 404
+                assert (await client.get("/admin/quick-add", follow_redirects=False)).status_code == 404
+                assert (await client.post("/test-slack")).status_code == 404
+                assert (await client.post("/test-digest")).status_code == 404
 
                 self_test = (await client.get("/self-test")).json()
                 assert self_test["overall"] == "ok"
@@ -258,38 +254,6 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert "重新檢查" in recheck_payload["message"]
                 assert restarted_agents == ["001"]
 
-                quick_add_html = (
-                    await client.get(
-                        "/admin/quick-add",
-                        params={
-                            "agent": "unprofiled-agent",
-                            "t": bridge.admin_ui.admin_token.sign("unprofiled-agent"),
-                            "embed": "1",
-                        },
-                    )
-                ).text
-                assert 'class="drawer-mode"' in quick_add_html
-                assert "端點業務背景" in quick_add_html
-                assert "這台電腦的用途" in quick_add_html
-                assert "負責人" in quick_add_html
-                assert "重要程度" in quick_add_html
-                assert "EdgeSec-Pi <span" not in quick_add_html
-
-                expired_quick_add_html = (
-                    await client.get(
-                        "/admin/quick-add",
-                        params={
-                            "agent": "wazuh-agent-01",
-                            "t": "expired",
-                            "embed": "1",
-                        },
-                    )
-                ).text
-                assert "此編輯連結已失效" in expired_quick_add_html
-                assert "儀表板開太久" in expired_quick_add_html
-                assert "回電腦端點" in expired_quick_add_html
-                assert "關閉並重新整理" in expired_quick_add_html
-
                 setup_redirect = await client.get(
                     "/dashboard",
                     params={"view": "setup"},
@@ -298,122 +262,56 @@ def test_bridge_webhook_queue_db_and_backpressure(monkeypatch: pytest.MonkeyPatc
                 assert setup_redirect.status_code == 301
                 assert setup_redirect.headers["location"] == "http://127.0.0.1:3000/settings/status"
 
-                notification_html = (
-                    await client.get(
-                        "/admin/notifications",
-                        auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                    )
-                ).text
-                assert "通知設定" in notification_html
-                assert "LINE、Slack、Telegram、Email 可各自設定" in notification_html
-                assert "回上線設定" in notification_html
-                assert "通知管道" in notification_html
-                assert "設定說明" in notification_html
-                assert "先儲存 LINE 權杖與接收者，才能測試。" in notification_html
-                assert 'class="channel-tab active"' in notification_html
-                assert "Telegram" in notification_html
-                assert "手機收到訊息才算完成" in notification_html
-                assert 'id="line"' in notification_html
-                assert 'id="slack"' not in notification_html
-                assert 'id="email"' not in notification_html
-                assert '/admin/notifications?channel=line' in notification_html
-                assert '/admin/notifications?channel=slack' in notification_html
-                assert '/admin/notifications?channel=telegram' in notification_html
-                assert '/admin/notifications?channel=email' in notification_html
-                assert "LINE_CHANNEL_ACCESS_TOKEN" in notification_html
-                assert "SLACK_WEBHOOK_URL" not in notification_html
-
-                notification_slack_html = (
-                    await client.get(
-                        "/admin/notifications",
-                        params={"channel": "slack"},
-                        auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                    )
-                ).text
-                assert 'id="slack"' in notification_slack_html
-                assert "SLACK_WEBHOOK_URL" in notification_slack_html
-                assert "測試 Slack" in notification_slack_html
-                assert "簡易通知" in notification_slack_html
-                assert "進階：Slack 互動按鈕" in notification_slack_html
-
-                notification_telegram_html = (
-                    await client.get(
-                        "/admin/notifications",
-                        params={"channel": "telegram"},
-                        auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                    )
-                ).text
-                assert 'id="telegram"' in notification_telegram_html
-                assert "TELEGRAM_BOT_TOKEN" in notification_telegram_html
-                assert "TELEGRAM_CHAT_ID" in notification_telegram_html
-                assert "測試 Telegram" in notification_telegram_html
-                assert "先儲存 Bot Token 與 Chat ID，才能測試。" in notification_telegram_html
-
-                invalid_line_save = await client.post(
-                    "/admin/notifications/line",
-                    data={"LINE_CHANNEL_ACCESS_TOKEN": "", "LINE_USER_ID": ""},
-                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
+                business_response = await client.put(
+                    "/api/dashboard/endpoints/unprofiled-agent/business-context",
+                    json={
+                        "role": "測試端點",
+                        "owner": "IT",
+                        "criticality": "medium",
+                        "business_hours": "Mon-Fri 09:00-18:00 Asia/Taipei",
+                        "pci_scope": False,
+                        "notes": "Dashboard v2 API 測試",
+                    },
                 )
-                assert invalid_line_save.status_code == 200
+                assert business_response.status_code == 200
+                assert business_response.json()["ok"] is True
+
+                notifications_payload = (await client.get("/api/dashboard/notifications")).json()
+                assert set(notifications_payload["channels"]) == {"line", "slack", "telegram", "email"}
+                assert notifications_payload["channels"]["line"]["configured"] is False
+
+                invalid_line_save = await client.put(
+                    "/api/dashboard/notifications/line",
+                    json={"values": {"LINE_CHANNEL_ACCESS_TOKEN": "", "LINE_USER_ID": ""}},
+                )
+                assert invalid_line_save.status_code == 400
                 assert "LINE 尚未儲存" in invalid_line_save.text
 
-                line_html = (
-                    await client.get(
-                        "/admin/notifications/line",
-                        auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                    )
-                ).text
-                assert "通知設定" in line_html
-                assert 'id="line"' in line_html
-                assert "/admin/notifications/line/test" in line_html
-                assert "SLACK_WEBHOOK_URL" not in line_html
-
-                slack_html = (
-                    await client.get(
-                        "/admin/notifications/slack",
-                        auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                    )
-                ).text
-                assert "通知設定" in slack_html
-                assert 'id="slack"' in slack_html
-                assert "/admin/notifications/slack/test" in slack_html
-                assert "Webhook URL" in slack_html
-                assert "進階：Slack 互動按鈕" in slack_html
-                assert "Channel ID" in slack_html
-                assert "Bot Token" in slack_html
-                assert "App Token" in slack_html
-                assert "目前狀態" in slack_html
-                assert "LINE_CHANNEL_ACCESS_TOKEN" not in slack_html
-
-                slack_test_get = await client.get(
-                    "/admin/notifications/slack/test",
-                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
-                    follow_redirects=False,
-                )
-                assert slack_test_get.status_code == 303
-                assert slack_test_get.headers["location"].startswith("/admin/notifications/slack")
-
-                save_response = await client.post(
-                    "/admin/notifications/line",
-                    data={
-                        "LINE_CHANNEL_ACCESS_TOKEN": "line-token",
-                        "LINE_USER_ID": "line-user",
+                save_response = await client.put(
+                    "/api/dashboard/notifications/line",
+                    json={
+                        "values": {
+                            "LINE_CHANNEL_ACCESS_TOKEN": "line-token",
+                            "LINE_USER_ID": "line-user",
+                        }
                     },
-                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
                 )
                 assert save_response.status_code == 200
-                assert "LINE 設定已儲存" in save_response.text
+                assert save_response.json()["channels"]["line"]["configured"] is True
                 assert bridge.notify_channels.line_configured() is True
 
-                await client.post(
-                    "/admin/notifications/slack",
-                    data={"SLACK_WEBHOOK_URL": "https://example.invalid/slack"},
-                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
+                await client.put(
+                    "/api/dashboard/notifications/slack",
+                    json={"values": {"SLACK_WEBHOOK_URL": "https://example.invalid/slack"}},
                 )
-                await client.post(
-                    "/admin/notifications/line",
-                    data={"LINE_CHANNEL_ACCESS_TOKEN": "line-token-2", "LINE_USER_ID": "line-user-2"},
-                    auth=(bridge.admin_ui.ADMIN_USER, bridge.admin_ui.ADMIN_PASS),
+                await client.put(
+                    "/api/dashboard/notifications/line",
+                    json={
+                        "values": {
+                            "LINE_CHANNEL_ACCESS_TOKEN": "line-token-2",
+                            "LINE_USER_ID": "line-user-2",
+                        }
+                    },
                 )
                 assert bridge.notify_channels.get_config("LINE_USER_ID") == "line-user-2"
                 assert bridge.notify_channels.get_config("SLACK_WEBHOOK_URL") == "https://example.invalid/slack"

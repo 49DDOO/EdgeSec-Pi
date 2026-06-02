@@ -26,6 +26,8 @@ from typing import Any, Optional
 
 import httpx
 
+import prompt_safety
+
 log = logging.getLogger("mcp-client")
 
 MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "").rstrip("/").strip() or None
@@ -231,7 +233,7 @@ async def enrich_alert(alert: dict[str, Any]) -> str:
     return (
         "MCP RELATED CONTEXT — Wazuh historical events from this source IP "
         f"({srcip}) in the past 7 days:\n"
-        f"{snippet}\n"
+        f"{prompt_safety.untrusted_data_block('MCP related historical events', snippet)}\n"
         "When writing summary_zh and assigning severity, account for this history. "
         "Same IP hitting multiple agents or rules over days indicates targeted "
         "campaign — escalate severity and mention it explicitly."
@@ -284,9 +286,11 @@ def format_correlation_for_prompt(rows: list[dict[str, Any]],
         f"CORRELATION CONTEXT — {len(rows)} alert(s) in the past {window_minutes} min "
         f"sharing {pivot} "
         f"(distinct rules: {len(distinct_rules)}, agents: {len(distinct_agents)}):\n"
-        + "\n".join(lines)
+        + prompt_safety.untrusted_data_block("correlated EdgeSec-Pi alert rows", "\n".join(lines))
         + "\n"
-        "Interpret this as a multi-stage / multi-host pattern, NOT as duplicate noise. "
+        "These are previous alerts from EdgeSec-Pi SQLite, newest first; relative "
+        "times are measured from prompt construction time. Interpret this as a "
+        "multi-stage / multi-host pattern, NOT as duplicate noise. "
         "If 3+ distinct rules fire from the same source IP within an hour, that is a "
         "campaign — raise severity at least one notch and explicitly mention in "
         "summary_zh and root_cause that this is part of an ongoing attack pattern. "

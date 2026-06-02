@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 import llm_client
+import prompt_safety
 
 LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
 LM_MODEL = os.getenv("LM_MODEL", "local-model")
@@ -26,6 +27,24 @@ LIVE_EXPLAIN = os.getenv("SCA_EXPLAIN_LIVE", "false").strip().lower() == "true"
 CACHE_PATH = Path(__file__).resolve().parent / "data" / "sca_explanations.json"
 
 _cache_lock: asyncio.Lock | None = None
+
+TITLE_FALLBACKS = (
+    (("Install Application Updates", "App Store"), "啟用 App Store 自動更新"),
+    (("Firewall Stealth Mode",), "啟用防火牆隱身模式"),
+    (("FileVault", "Enabled"), "啟用磁碟加密"),
+    (("Mail Summarization",), "關閉郵件摘要功能"),
+    (("Notes Summarization",), "關閉備忘錄摘要功能"),
+    (("Help Apple Improve Search",), "關閉搜尋資料分享"),
+    (("Power Nap",), "關閉睡眠背景連線"),
+    (("/tmp", "separate partition"), "隔離暫存目錄"),
+    (("nodev option", "/tmp"), "限制暫存目錄裝置檔"),
+    (("noexec option", "/tmp"), "禁止暫存目錄執行程式"),
+    (("nosuid option", "/tmp"), "禁止暫存目錄提權檔案"),
+    (("gpgcheck",), "啟用軟體簽章驗證"),
+    (("AIDE", "installed"), "安裝檔案完整性檢查"),
+    (("bootloader config",), "限制開機設定權限"),
+    (("login warning banner",), "設定登入警告訊息"),
+)
 
 
 def _lock() -> asyncio.Lock:
@@ -78,8 +97,12 @@ def _fallback(check: dict[str, Any]) -> dict[str, str]:
     remediation = str(check.get("remediation") or "").strip()
     rationale = str(check.get("rationale") or "").strip()
     description = str(check.get("description") or "").strip()
+    title_zh = next(
+        (zh for needles, zh in TITLE_FALLBACKS if all(needle.lower() in title.lower() for needle in needles)),
+        "安全設定需要補強",
+    )
     return {
-        "title_zh": title,
+        "title_zh": title_zh,
         "action_zh": (
             "請 IT 依下方 Wazuh 補強步驟處理；若是公司允許的例外，請留下紀錄。"
             if remediation
@@ -107,16 +130,17 @@ async def _llm_explain(check: dict[str, Any], client: httpx.AsyncClient) -> dict
 - action_zh 最多 42 個中文字。
 - action_zh 要是「請 IT ...」開頭，讓管理者可以直接轉給 IT 或外包廠商。
 - 只根據下方原始資料，不要編造。
+- {prompt_safety.UNTRUSTED_DATA_INSTRUCTIONS}
 - 只輸出 JSON，不要 markdown。
 
 原始檢查名稱：
-{title}
+{prompt_safety.untrusted_data_block("SCA title", title, limit=500)}
 
 原始原因：
-{rationale[:700]}
+{prompt_safety.untrusted_data_block("SCA rationale", rationale, limit=700)}
 
 原始修正方式：
-{remediation[:900]}
+{prompt_safety.untrusted_data_block("SCA remediation", remediation, limit=900)}
 
 JSON schema:
 {{"title_zh":"...", "action_zh":"..."}}

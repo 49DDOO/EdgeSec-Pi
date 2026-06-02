@@ -13,17 +13,20 @@ Two ways to consume:
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import re
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 
 import db
+import notify_channels
 
 log = logging.getLogger("digest")
 
@@ -31,6 +34,12 @@ WAZUH_MANAGER_CONTAINER = os.getenv(
     "WAZUH_MANAGER_CONTAINER", "single-node-wazuh.manager-1"
 )
 DIGEST_HOUR_LOCAL = int(os.getenv("DIGEST_HOUR_LOCAL", "9"))  # 09:00 by default
+DIGEST_LOCK_PATH = Path(
+    os.getenv(
+        "DIGEST_LOCK_PATH",
+        str(Path(__file__).resolve().parent / "data" / "digest-scheduler.lock"),
+    )
+)
 
 # Set when the bridge starts up; used to report uptime.
 START_TIME = time.time()
@@ -73,22 +82,41 @@ def _get_wazuh_version_sync() -> Optional[str]:
 
 
 def _get_cve_feed_status_sync() -> dict:
-    """Find the most recent successful 'Feed update process completed' line in ossec.log."""
+    """Find the most recent successful vulnerability feed update.
+
+    Older Wazuh versions log a clear "Feed update process completed" line.
+    Newer vulnerability scanner builds keep feed metadata under vd_updater,
+    so we fallback to the newest metadata write when the log line is absent.
+    """
     out = _docker_exec(
         ["sh", "-c",
          "grep -F 'Feed update process completed' /var/ossec/logs/ossec.log "
          "| tail -1"],
         timeout=10,
     )
-    if not out:
-        return {"last_update": None, "minutes_ago": None, "status": "unknown"}
+    if out:
+        m = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})", out)
+        if m:
+            # The manager container runs in UTC.
+            ts = datetime.strptime(m.group(1), "%Y/%m/%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            return _cve_status_from_timestamp(ts, "ossec_log")
 
-    m = re.match(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})", out)
-    if not m:
-        return {"last_update": None, "minutes_ago": None, "status": "unknown"}
+    metadata = _get_vulnerability_metadata_status_sync()
+    if metadata["status"] != "unknown":
+        return metadata
 
-    # The manager container runs in UTC.
-    ts = datetime.strptime(m.group(1), "%Y/%m/%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    return {
+        "last_update": None,
+        "minutes_ago": None,
+        "status": "unknown",
+        "source": "none",
+    }
+
+
+def _cve_status_from_timestamp(ts: datetime, source: str) -> dict[str, Any]:
+    """Classify a vulnerability feed timestamp as fresh/stale/stuck."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
     minutes_ago = int((datetime.now(timezone.utc) - ts).total_seconds() / 60)
 
     if minutes_ago < 60 * 36:        # < 36h → fresh
@@ -97,7 +125,46 @@ def _get_cve_feed_status_sync() -> dict:
         status = "stale"
     else:
         status = "stuck"             # > 7d → broken
-    return {"last_update": ts.isoformat(), "minutes_ago": minutes_ago, "status": status}
+    return {
+        "last_update": ts.isoformat(),
+        "minutes_ago": minutes_ago,
+        "status": status,
+        "source": source,
+    }
+
+
+def _get_vulnerability_metadata_status_sync() -> dict[str, Any]:
+    """Fallback for Wazuh 4.x vulnerability scanner metadata freshness."""
+    out = _docker_exec(
+        [
+            "sh",
+            "-c",
+            "find /var/ossec/queue/vd_updater/rocksdb/updater_vulnerability_feed_manager_metadata "
+            "-maxdepth 1 -type f \\( -name '*.sst' -o -name '[0-9]*.log' "
+            "-o -name 'MANIFEST-*' -o -name 'CURRENT' \\) "
+            "-printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -1",
+        ],
+        timeout=10,
+    )
+    if not out:
+        return {
+            "last_update": None,
+            "minutes_ago": None,
+            "status": "unknown",
+            "source": "vd_metadata",
+        }
+
+    try:
+        epoch = float(out.split()[0])
+    except (ValueError, IndexError):
+        return {
+            "last_update": None,
+            "minutes_ago": None,
+            "status": "unknown",
+            "source": "vd_metadata",
+        }
+
+    return _cve_status_from_timestamp(datetime.fromtimestamp(epoch, timezone.utc), "vd_metadata")
 
 
 def _get_agents_status_sync() -> dict:
@@ -328,10 +395,28 @@ def format_digest_slack(status: dict[str, Any]) -> dict:
     }
 
 
+def _acquire_scheduler_lock():
+    """Keep only one daily digest scheduler active across bridge processes."""
+    DIGEST_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = DIGEST_LOCK_PATH.open("w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        return None
+
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(f"pid={os.getpid()} started_at={datetime.now(timezone.utc).isoformat()}\n")
+    lock_file.flush()
+    return lock_file
+
+
 # ─── Sender ──────────────────────────────────────────────────────────────
 async def send_digest(slack_url: Optional[str]) -> dict:
     """Collect, optionally post to Slack, return the status dict."""
     status = await collect_status()
+    slack_url = slack_url or notify_channels.get_config("SLACK_WEBHOOK_URL")
     if slack_url:
         payload = format_digest_slack(status)
         try:
@@ -350,24 +435,35 @@ async def daily_scheduler(slack_url: Optional[str]) -> None:
     Intentionally simple: no cron, no APScheduler. macOS doesn't change
     timezone often, so a daily realign on each iteration is enough.
     """
-    log.info("digest scheduler armed for %02d:00 local time daily", DIGEST_HOUR_LOCAL)
-    while True:
-        now = datetime.now()
-        target = now.replace(
-            hour=DIGEST_HOUR_LOCAL, minute=0, second=0, microsecond=0
+    scheduler_lock = _acquire_scheduler_lock()
+    if scheduler_lock is None:
+        log.warning(
+            "digest scheduler already active; this process will not post daily Slack digests"
         )
-        if target <= now:
-            target += timedelta(days=1)
-        sleep_s = (target - now).total_seconds()
-        log.info("next digest at %s (in %.1f h)", target.isoformat(timespec="seconds"), sleep_s/3600)
+        return
 
-        try:
-            await asyncio.sleep(sleep_s)
-        except asyncio.CancelledError:
-            log.info("digest scheduler stopping")
-            return
+    log.info("digest scheduler armed for %02d:00 local time daily", DIGEST_HOUR_LOCAL)
+    try:
+        while True:
+            now = datetime.now()
+            target = now.replace(
+                hour=DIGEST_HOUR_LOCAL, minute=0, second=0, microsecond=0
+            )
+            if target <= now:
+                target += timedelta(days=1)
+            sleep_s = (target - now).total_seconds()
+            log.info("next digest at %s (in %.1f h)", target.isoformat(timespec="seconds"), sleep_s/3600)
 
-        try:
-            await send_digest(slack_url)
-        except Exception:
-            log.exception("daily digest run failed; will retry tomorrow")
+            try:
+                await asyncio.sleep(sleep_s)
+            except asyncio.CancelledError:
+                log.info("digest scheduler stopping")
+                return
+
+            try:
+                await send_digest(slack_url)
+            except Exception:
+                log.exception("daily digest run failed; will retry tomorrow")
+    finally:
+        fcntl.flock(scheduler_lock.fileno(), fcntl.LOCK_UN)
+        scheduler_lock.close()

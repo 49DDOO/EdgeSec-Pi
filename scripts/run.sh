@@ -159,7 +159,7 @@ service_status_line() {
   local pid
   pid="$(read_pid_file "$pid_file")"
 
-  if curl -ksS -m 3 "$url" >/dev/null 2>&1; then
+  if curl -ksSf -m 3 "$url" >/dev/null 2>&1; then
     if pid_alive "$pid"; then
       c_ok "$name responding at $url (pid $pid)"
     else
@@ -309,7 +309,7 @@ cmd_dashboard() {
     c_err "dashboard source not found at $DASHBOARD_DIR"
     return 1
   fi
-  if curl -sS -m 3 "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null 2>&1; then
+  if curl -fsS -m 3 "http://127.0.0.1:$DASHBOARD_PORT" >/dev/null 2>&1; then
     local pid
     pid="$(listen_pids "$DASHBOARD_PORT" | head -1)"
     [[ -n "$pid" ]] && echo "$pid" > "$LOGS/dashboard.pid"

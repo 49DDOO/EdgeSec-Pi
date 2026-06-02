@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 import siem
+import wazuh_settings
 
 log = logging.getLogger("webhook-api")
 
@@ -23,7 +24,7 @@ router = APIRouter(tags=["webhook"])
 
 
 def _webhook_secret() -> str | None:
-    return os.getenv("WEBHOOK_SECRET", "").strip() or None
+    return str(wazuh_settings.get("WEBHOOK_SECRET") or os.getenv("WEBHOOK_SECRET", "")).strip() or None
 
 
 def _check_webhook_secret(request: Request) -> None:

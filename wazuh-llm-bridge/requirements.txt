@@ -9,6 +9,6 @@ slack-sdk>=3.27
 aiohttp>=3.9
 
 # Phase 4: org_profile.yaml (business context injected into LLM prompt)
-# python-multipart is required by FastAPI's Form() handlers in /admin
+# python-multipart is required by legacy form compatibility routes.
 PyYAML>=6.0
 python-multipart>=0.0.9

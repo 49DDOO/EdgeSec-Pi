@@ -15,6 +15,8 @@ from typing import Any
 import httpx
 
 import db
+import wazuh_hardening
+import wazuh_settings
 
 
 Status = str
@@ -108,16 +110,19 @@ async def _check_lm_studio(client: httpx.AsyncClient) -> dict[str, Any]:
 
 
 async def _check_wazuh_api(client: httpx.AsyncClient) -> dict[str, Any]:
-    url = os.getenv("WAZUH_API_URL", "https://localhost:55000").rstrip("/")
+    cfg = wazuh_settings.api_config()
+    url = str(cfg["url"] or "https://localhost:55000").rstrip("/")
     try:
-        response = await client.get(f"{url}/", timeout=5)
+        async with httpx.AsyncClient(verify=bool(cfg["verify_ssl"])) as wazuh_client:
+            response = await wazuh_client.get(f"{url}/", timeout=5)
         if response.status_code in {200, 401}:
+            detail = "API 可連線，需要登入驗證" if response.status_code == 401 else "API 可連線"
             return _check(
                 "wazuh_api",
                 "Wazuh",
                 "ok",
                 "Wazuh API 可以連線。",
-                detail_zh=f"HTTP {response.status_code}",
+                detail_zh=detail,
                 required=False,
             )
         return _check(
@@ -197,6 +202,103 @@ async def _check_mcp(client: httpx.AsyncClient) -> dict[str, Any]:
         )
 
 
+async def _check_wazuh_hardening() -> dict[str, Any]:
+    result = await wazuh_hardening.collect_status()
+    return _check(
+        "wazuh_hardening",
+        "偵測強化",
+        str(result.get("status") or "warn"),
+        str(result.get("summary_zh") or "無法確認 Wazuh 偵測強化狀態。"),
+        str(result.get("next_step_zh") or ""),
+        detail_zh=(
+            f"groups={','.join(result.get('groups_present') or [])}; "
+            f"missing={','.join(result.get('missing_groups') or [])}; "
+            f"agents_checked={result.get('agents_checked', 0)}; "
+            "scope=此檢查確認 agent-groups 是否部署與套用；已套用群組不等於每個偵測模組都在產生事件。"
+        ),
+        owner_zh="IT",
+        required=False,
+    )
+
+
+def _module_flow_days() -> int:
+    raw = os.getenv("WAZUH_MODULE_FLOW_DAYS", "7").strip()
+    try:
+        return max(1, min(int(raw), 30))
+    except ValueError:
+        return 7
+
+
+def _module_labels(modules: list[str], labels: dict[str, str], limit: int = 4) -> str:
+    rendered = [labels.get(module, module) for module in modules[:limit]]
+    if len(modules) > limit:
+        rendered.append(f"另 {len(modules) - limit} 類")
+    return "、".join(rendered)
+
+
+async def _check_wazuh_module_flow() -> dict[str, Any]:
+    days = _module_flow_days()
+    try:
+        flow = await db.module_event_flow(days=days)
+    except Exception as exc:
+        return _check(
+            "wazuh_module_flow",
+            "偵測事件流",
+            "warn",
+            "目前無法讀取近期 Wazuh 模組事件流。",
+            "請 IT 檢查 EdgeSec-Pi 的 SQLite 資料庫設定。",
+            detail_zh=repr(exc),
+            owner_zh="IT",
+            required=False,
+        )
+
+    labels = flow.get("labels_zh") if isinstance(flow.get("labels_zh"), dict) else {}
+    observed = [str(module) for module in flow.get("observed") or []]
+    observed_expected = [str(module) for module in flow.get("observed_expected") or []]
+    missing_expected = [str(module) for module in flow.get("missing_expected") or []]
+    total = int(flow.get("total") or 0)
+    rows_scanned = int(flow.get("rows_scanned") or 0)
+    scope_note = f"window={days}d; rows_scanned={rows_scanned}; 已套用群組不等於每個偵測模組都在產生事件。"
+
+    if total <= 0:
+        return _check(
+            "wazuh_module_flow",
+            "偵測事件流",
+            "warn",
+            f"最近 {days} 天尚未觀察到 Wazuh 模組事件流。",
+            "請 IT 確認端點有產生測試事件，或檢查 FIM/SCA/Sysmon/VT/YARA 設定。",
+            detail_zh=scope_note,
+            owner_zh="IT",
+            required=False,
+        )
+
+    if observed_expected:
+        seen = _module_labels(observed_expected, labels)
+        missing = _module_labels(missing_expected, labels) if missing_expected else ""
+        return _check(
+            "wazuh_module_flow",
+            "偵測事件流",
+            "ok",
+            f"最近 {days} 天已看到強化模組事件流：{seen}。",
+            detail_zh=f"{scope_note}; missing_expected={missing or 'none'}",
+            owner_zh="IT",
+            required=False,
+        )
+
+    seen = _module_labels(observed, labels) or "只有一般告警"
+    missing = _module_labels(missing_expected, labels)
+    return _check(
+        "wazuh_module_flow",
+        "偵測事件流",
+        "warn",
+        f"最近 {days} 天有告警，但尚未看到強化模組事件流。",
+        "請 IT 確認 FIM/SCA/Sysmon/VT/YARA 是否真的有資料進 Wazuh。",
+        detail_zh=f"{scope_note}; observed={seen}; missing_expected={missing}",
+        owner_zh="IT",
+        required=False,
+    )
+
+
 async def _check_alert_flow() -> dict[str, Any]:
     try:
         stats = await db.compute_stats()
@@ -252,7 +354,7 @@ def _check_slack_config() -> dict[str, Any]:
             "Slack 通知",
             "ok",
             "Slack 通知設定已存在。",
-            "若要確認實際送達，請 IT 執行 /test-slack 或手動測試。",
+            "若要確認實際送達，請到 Dashboard 的通知設定頁送出測試訊息。",
             required=False,
         )
     return _check(
@@ -307,6 +409,8 @@ async def run_self_test(queue_size: int = 0, queue_max: int = 0) -> dict[str, An
         checks.append(await _check_mcp(client))
 
     checks.append(await _check_alert_flow())
+    checks.append(await _check_wazuh_hardening())
+    checks.append(await _check_wazuh_module_flow())
     checks.append(_check_slack_config())
 
     summary = _summarize(checks)

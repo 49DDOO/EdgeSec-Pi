@@ -18,12 +18,14 @@ SLACK_CHANNEL_ID aren't all set — the rest of the bridge still runs.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
 import time
 from typing import Any, Optional
 
+import active_response_safety
 import wazuh
 import remote_action_tokens
 
@@ -42,8 +44,12 @@ def is_enabled() -> bool:
     return bool(SLACK_BOT_TOKEN and SLACK_APP_TOKEN and SLACK_CHANNEL_ID)
 
 
-def endpoint_isolation_enabled() -> bool:
-    return bool(WAZUH_ISOLATE_COMMAND)
+def endpoint_isolation_enabled(platform: str = "", *, agent_id: str = "", agent_name: str = "") -> bool:
+    return active_response_safety.isolation_actions_enabled(
+        platform,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
 
 
 # IPv4 detection — only show "block IP" button for IOCs that look like
@@ -57,8 +63,8 @@ def extract_blockable_ips(parsed_llm: dict[str, Any]) -> list[str]:
     out = []
     for ioc in iocs:
         s = str(ioc).strip()
-        if _IPV4_RE.match(s) and not s.startswith(("127.", "0.", "255.")):
-            out.append(s)
+        if _IPV4_RE.match(s) and active_response_safety.is_blockable_ip_candidate(s):
+            out.append(active_response_safety.normalize_ip(s))
     return out
 
 
@@ -100,14 +106,40 @@ def _unblock_button(agent_id: str, ip: str) -> dict:
     }
 
 
-def _isolate_button(agent_id: str, agent_name: str) -> dict:
+def _isolation_target(agent_name: str, platform: str = "") -> str:
+    return json.dumps(
+        {
+            "name": str(agent_name or ""),
+            "platform": str(platform or ""),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _parse_isolation_target(value: Any) -> tuple[str, str]:
+    raw = str(value or "")
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return raw, ""
+    if not isinstance(parsed, dict):
+        return raw, ""
+    return str(parsed.get("name") or ""), str(parsed.get("platform") or "")
+
+
+def _isolate_button(agent_id: str, agent_name: str, platform: str = "") -> dict:
     """Block Kit element for endpoint isolation."""
     return {
         "type": "button",
         "action_id": "isolate_endpoint",
         "style": "danger",
         "text": {"type": "plain_text", "text": "隔離端點"},
-        "value": remote_action_tokens.issue("isolate_endpoint", agent_id, target=agent_name),
+        "value": remote_action_tokens.issue(
+            "isolate_endpoint",
+            agent_id,
+            target=_isolation_target(agent_name, platform),
+        ),
         "confirm": {
             "title": {"type": "plain_text", "text": "確認隔離這台電腦？"},
             "text": {
@@ -124,6 +156,29 @@ def _isolate_button(agent_id: str, agent_name: str) -> dict:
     }
 
 
+def _release_isolation_button(agent_id: str, agent_name: str) -> dict:
+    """Block Kit element for releasing endpoint isolation."""
+    target = agent_name or agent_id
+    return {
+        "type": "button",
+        "action_id": "release_isolation",
+        "text": {"type": "plain_text", "text": "解除隔離"},
+        "value": remote_action_tokens.issue("release_isolation", agent_id, target=agent_name),
+        "confirm": {
+            "title": {"type": "plain_text", "text": "確認解除隔離？"},
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"只有在 IT 確認 `{target}` 已處理完成、或隔離造成營運影響時才使用。\n"
+                    "按下後會嘗試恢復這台端點的網路連線。"
+                ),
+            },
+            "confirm": {"type": "plain_text", "text": "解除隔離"},
+            "deny": {"type": "plain_text", "text": "取消"},
+        },
+    }
+
+
 def _friendly_isolation_error(agent_name: str, error: Exception) -> str:
     raw = str(error)
     target = agent_name or "這台電腦"
@@ -133,10 +188,41 @@ def _friendly_isolation_error(agent_name: str, error: Exception) -> str:
             f"`{target}` 目前沒有安裝並設定端點隔離腳本，所以系統沒有真的隔離這台電腦。\n"
             "請 IT 先手動處理；若要啟用這個按鈕，請先完成隔離腳本部署並設定 `WAZUH_ISOLATE_COMMAND`。"
         )
+    if "WAZUH_RELEASE_ISOLATE_COMMAND" in raw or "解除隔離命令" in raw:
+        return (
+            f"⚠️ *尚未啟用解除隔離*\n"
+            f"`{target}` 目前沒有設定解除隔離腳本。為避免單向隔離，系統拒絕執行隔離。\n"
+            "請先部署並設定 `WAZUH_RELEASE_ISOLATE_COMMAND`。"
+        )
+    if "管理通道" in raw or "management-channel" in raw:
+        return (
+            f"⚠️ *隔離腳本尚未通過安全確認*\n"
+            f"`{target}` 的隔離腳本必須保留 Wazuh/管理通道，否則遠端可能救不回來。\n"
+            "請先測試腳本，再設定 `ACTIVE_RESPONSE_ISOLATION_PRESERVE_CHANNELS_ACK=1`。"
+        )
+    if "真機隔離" in raw or "作業系統" in raw or "agent platform" in raw:
+        return (
+            f"⚠️ *端點隔離尚未對這個作業系統放行*\n"
+            f"`{target}` 的 OS 還沒有被標記為真機測試通過，系統拒絕隔離。\n"
+            "請 IT 完成 isolate/release/TTL/重開機測試後，再設定 `ACTIVE_RESPONSE_ISOLATION_VERIFIED_PLATFORMS`。"
+        )
     return (
         f"❌ *隔離 `{target}` 未完成*\n"
         f"請 IT 手動處理，並查看 bridge log 確認原因。錯誤摘要：{raw}"
     )
+
+
+def _friendly_release_isolation_error(agent_name: str, error: Exception) -> str:
+    raw = str(error)
+    target = agent_name or "這台電腦"
+    if "找不到 EdgeSec-Pi" in raw:
+        return f"⚠️ *沒有追蹤中的隔離紀錄* `{target}` 不是由 EdgeSec-Pi 目前這筆隔離流程管理。"
+    if "WAZUH_RELEASE_ISOLATE_COMMAND" in raw:
+        return (
+            f"⚠️ *尚未啟用解除隔離*\n"
+            f"`{target}` 需要 IT 手動恢復，或先部署 `WAZUH_RELEASE_ISOLATE_COMMAND`。"
+        )
+    return f"❌ *解除隔離 `{target}` 未完成*\n請 IT 手動處理，並查看 bridge log。錯誤摘要：{raw}"
 
 
 def _rewrite_with_audit(attachments: list[dict],
@@ -185,6 +271,9 @@ def _register_handlers(app) -> None:
                 err = (result["data"]["failed_items"][0]
                        .get("error", {}).get("message", "unknown"))
                 raise RuntimeError(f"Wazuh API: {err}")
+        except active_response_safety.ActiveResponseDenied as e:
+            await respond(replace_original=False, text=f"⚠️ 封鎖 `{ip}` 已拒絕：{e.message}")
+            return
         except Exception as e:
             log.exception("block_ip failed")
             await respond(replace_original=False, text=f"❌ 封鎖 `{ip}` 失敗：{e}")
@@ -223,6 +312,9 @@ def _register_handlers(app) -> None:
             result = await wazuh.unblock_ip(agent_id, ip)
             if not result.get("ok"):
                 raise RuntimeError(result.get("error", "unknown"))
+        except active_response_safety.ActiveResponseDenied as e:
+            await respond(replace_original=False, text=f"⚠️ 解封 `{ip}` 已拒絕：{e.message}")
+            return
         except Exception as e:
             log.exception("unblock_ip failed")
             await respond(replace_original=False, text=f"❌ 解封 `{ip}` 失敗：{e}")
@@ -248,7 +340,7 @@ def _register_handlers(app) -> None:
         try:
             claims = remote_action_tokens.consume(value, "isolate_endpoint", clicker=clicker)
             agent_id = str(claims["agent_id"])
-            agent_name = str(claims.get("target") or "")
+            agent_name, agent_platform = _parse_isolation_target(claims.get("target"))
         except remote_action_tokens.ActionTokenError as e:
             await respond(replace_original=False,
                           text=f"⚠️ {e}")
@@ -259,6 +351,9 @@ def _register_handlers(app) -> None:
             result = await wazuh.isolate_agent(
                 agent_id,
                 reason=f"Slack emergency isolation requested by {clicker}",
+                agent_name=agent_name,
+                platform=agent_platform,
+                actor=clicker,
             )
             if not result.get("ok"):
                 raise RuntimeError(result.get("error", "unknown"))
@@ -279,16 +374,64 @@ def _register_handlers(app) -> None:
             return
 
         attachments = body.get("message", {}).get("attachments") or []
+        guardrails = (result.get("wazuh_response", {}).get("_edgesec") or {}).get("guardrails") or {}
+        ttl_s = result.get("ttl_s") or guardrails.get("ttl_s")
+        ttl_text = f" · TTL {int(ttl_s // 60)} 分鐘" if isinstance(ttl_s, (int, float)) else ""
         rewritten = _rewrite_with_audit(
             attachments,
             confirm_line=(f"⛔ *已送出端點隔離* `{agent_name or agent_id}` "
                           f"(by *{clicker}* · {time.strftime('%H:%M:%S')} "
-                          f"· Wazuh active response)"),
-            new_action_button=None,
+                          f"· Wazuh active response{ttl_text})"),
+            new_action_button=_release_isolation_button(agent_id, agent_name),
         )
         await respond(replace_original=True,
                       text=f"已送出端點隔離 {agent_name or agent_id}",
                       attachments=rewritten)
+
+    @app.action("release_isolation")
+    async def handle_release_isolation(ack, body, action, respond, client):
+        await ack()
+        clicker = body.get("user", {}).get("username") or body.get("user", {}).get("id", "?")
+        value = action.get("value", "")
+        try:
+            claims = remote_action_tokens.consume(value, "release_isolation", clicker=clicker)
+            agent_id = str(claims["agent_id"])
+            agent_name = str(claims.get("target") or "")
+        except remote_action_tokens.ActionTokenError as e:
+            await respond(replace_original=False, text=f"⚠️ {e}")
+            return
+
+        log.warning("user=%s clicked release_isolation agent=%s", clicker, agent_id)
+        try:
+            result = await wazuh.release_isolation(
+                agent_id,
+                agent_name=agent_name,
+                reason=f"Slack isolation release requested by {clicker}",
+                actor=clicker,
+            )
+            if not result.get("ok"):
+                raise RuntimeError(result.get("error", "unknown"))
+        except Exception as e:
+            log.exception("release_isolation failed")
+            await respond(
+                replace_original=False,
+                text=_friendly_release_isolation_error(agent_name or agent_id, e),
+            )
+            return
+
+        attachments = body.get("message", {}).get("attachments") or []
+        rewritten = _rewrite_with_audit(
+            attachments,
+            confirm_line=(f"✅ *已送出解除隔離* `{agent_name or agent_id}` "
+                          f"(by *{clicker}* · {time.strftime('%H:%M:%S')} "
+                          f"· Wazuh active response)"),
+            new_action_button=None,
+        )
+        await respond(
+            replace_original=True,
+            text=f"已送出解除隔離 {agent_name or agent_id}",
+            attachments=rewritten,
+        )
 
 
 # ────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,1092 @@
+{
+  "schema_version": "wazuh-deterministic-baseline-v1",
+  "corpus": "corpus.jsonl",
+  "received_at_epoch": 1760000000,
+  "case_count": 21,
+  "summary": {
+    "human_expected_severity_counts": {
+      "critical": 2,
+      "high": 10,
+      "info": 3,
+      "low": 2,
+      "medium": 4
+    },
+    "canonical_signal_type_counts": {
+      "authentication.bruteforce": 4,
+      "endpoint.windows_event": 1,
+      "security.alert": 14,
+      "vulnerability.detected": 2
+    },
+    "technical_module_counts": {
+      "authentication": 4,
+      "other": 14,
+      "vulnerability": 2,
+      "windows": 1
+    },
+    "cases_with_canonical_observables": 5,
+    "cases_with_technical_indicators": 8
+  },
+  "cases": [
+    {
+      "case_id": "ssh_brute_force",
+      "human_expected_severity": "medium",
+      "human_expected_keywords": [
+        "brute force",
+        "203.0.113.45",
+        "block"
+      ],
+      "rule_id": "5712",
+      "rule_level": 10,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "authentication.bruteforce",
+        "title": "sshd: Possible breakin attempt.",
+        "native_severity": "10",
+        "asset_name": "web-prod",
+        "actor_user": "admin",
+        "source_ip": "203.0.113.45",
+        "destination_ip": "",
+        "target_service": "ssh",
+        "observables": {
+          "ips": [
+            "203.0.113.45"
+          ],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "authentication",
+        "rule_id": "5712",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [
+          "source_ip",
+          "username"
+        ],
+        "indicator_values": {
+          "source_ip": "203.0.113.45",
+          "username": "admin"
+        },
+        "module_context_keys": [
+          "authentication_result",
+          "username"
+        ],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "fim_shadow_modified",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "shadow",
+        "credential",
+        "investigate"
+      ],
+      "rule_id": "550",
+      "rule_level": 12,
+      "agent_name": "db-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Integrity checksum changed.",
+        "native_severity": "12",
+        "asset_name": "db-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "550",
+        "endpoint_name": "db-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "rootkit_detection",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "rootkit",
+        "isolate",
+        "compromise"
+      ],
+      "rule_id": "510",
+      "rule_level": 12,
+      "agent_name": "edge-gw",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Host-based anomaly detection event (rootcheck).",
+        "native_severity": "12",
+        "asset_name": "edge-gw",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "510",
+        "endpoint_name": "edge-gw",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "user_added_sudoers",
+      "human_expected_severity": "low",
+      "human_expected_keywords": [
+        "privilege",
+        "sudoers",
+        "bob"
+      ],
+      "rule_id": "5402",
+      "rule_level": 9,
+      "agent_name": "db-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "authentication.bruteforce",
+        "title": "Successful sudo to ROOT executed.",
+        "native_severity": "9",
+        "asset_name": "db-prod",
+        "actor_user": "bob",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "authentication",
+        "rule_id": "5402",
+        "endpoint_name": "db-prod",
+        "indicator_keys": [
+          "username"
+        ],
+        "indicator_values": {
+          "username": "bob"
+        },
+        "module_context_keys": [
+          "username"
+        ],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "web_sql_injection",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "sql injection",
+        "203.0.113.99",
+        "waf"
+      ],
+      "rule_id": "31103",
+      "rule_level": 11,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "SQL injection attempt.",
+        "native_severity": "11",
+        "asset_name": "web-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "31103",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "web_path_traversal",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "traversal",
+        "198.51.100.20",
+        "passwd"
+      ],
+      "rule_id": "31106",
+      "rule_level": 11,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Path traversal attempt.",
+        "native_severity": "11",
+        "asset_name": "web-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "31106",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "web_404_benign",
+      "human_expected_severity": "info",
+      "human_expected_keywords": [
+        "favicon",
+        "404",
+        "no action"
+      ],
+      "rule_id": "31108",
+      "rule_level": 5,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Web server 400 error code.",
+        "native_severity": "5",
+        "asset_name": "web-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "31108",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "cve_apache_rce",
+      "human_expected_severity": "critical",
+      "human_expected_keywords": [
+        "cve-2024-38476",
+        "patch",
+        "apache"
+      ],
+      "rule_id": "23502",
+      "rule_level": 13,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "vulnerability.detected",
+        "title": "Vulnerability detected (CVE-2024-38476): Apache HTTP Server backend application data leak / RCE.",
+        "native_severity": "13",
+        "asset_name": "web-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "vulnerability",
+        "rule_id": "23502",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "cve_low_severity",
+      "human_expected_severity": "low",
+      "human_expected_keywords": [
+        "libxml2",
+        "upgrade",
+        "cve-2023-4567"
+      ],
+      "rule_id": "23502",
+      "rule_level": 6,
+      "agent_name": "db-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "vulnerability.detected",
+        "title": "Vulnerability detected (CVE-2023-4567): low-severity info disclosure in libxml2.",
+        "native_severity": "6",
+        "asset_name": "db-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "vulnerability",
+        "rule_id": "23502",
+        "endpoint_name": "db-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "agent_disconnect",
+      "human_expected_severity": "info",
+      "human_expected_keywords": [
+        "agent",
+        "edge-gw",
+        "connectivity"
+      ],
+      "rule_id": "503",
+      "rule_level": 7,
+      "agent_name": "edge-gw",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Wazuh agent disconnected.",
+        "native_severity": "7",
+        "asset_name": "edge-gw",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "503",
+        "endpoint_name": "edge-gw",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "pci_cardholder_access",
+      "human_expected_severity": "medium",
+      "human_expected_keywords": [
+        "pci",
+        "cardholder",
+        "audit"
+      ],
+      "rule_id": "17103",
+      "rule_level": 10,
+      "agent_name": "db-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "PCI_DSS: Access to cardholder data.",
+        "native_severity": "10",
+        "asset_name": "db-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "17103",
+        "endpoint_name": "db-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "windows_powershell_obfuscation",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "powershell",
+        "obfuscation",
+        "iex"
+      ],
+      "rule_id": "91802",
+      "rule_level": 11,
+      "agent_name": "win-finance",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "PowerShell obfuscated script block detected.",
+        "native_severity": "11",
+        "asset_name": "win-finance",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "91802",
+        "endpoint_name": "win-finance",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "suspicious_dns_c2",
+      "human_expected_severity": "medium",
+      "human_expected_keywords": [
+        "c2",
+        "dns",
+        "duckdns"
+      ],
+      "rule_id": "61631",
+      "rule_level": 8,
+      "agent_name": "win-finance",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Suspicious DNS query to known C2 domain.",
+        "native_severity": "8",
+        "asset_name": "win-finance",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "61631",
+        "endpoint_name": "win-finance",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "disk_space_warning",
+      "human_expected_severity": "info",
+      "human_expected_keywords": [
+        "disk",
+        "/var",
+        "cleanup"
+      ],
+      "rule_id": "531",
+      "rule_level": 3,
+      "agent_name": "db-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Filesystem usage above 80%.",
+        "native_severity": "3",
+        "asset_name": "db-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "531",
+        "endpoint_name": "db-prod",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "cleartext_credentials",
+      "human_expected_severity": "medium",
+      "human_expected_keywords": [
+        "cleartext",
+        "rotate",
+        "tls"
+      ],
+      "rule_id": "31151",
+      "rule_level": 10,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Cleartext credentials detected in HTTP traffic.",
+        "native_severity": "10",
+        "asset_name": "web-prod",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "31151",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [
+          "username"
+        ],
+        "indicator_values": {
+          "username": "svc-billing&password=Sup3rSecret!"
+        },
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "ssh_brute_force_ru_geo",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "t1110",
+        "russia",
+        "block"
+      ],
+      "rule_id": "5712",
+      "rule_level": 10,
+      "agent_name": "web-prod",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "authentication.bruteforce",
+        "title": "sshd: Possible breakin attempt.",
+        "native_severity": "10",
+        "asset_name": "web-prod",
+        "actor_user": "root",
+        "source_ip": "185.220.101.45",
+        "destination_ip": "",
+        "target_service": "ssh",
+        "observables": {
+          "ips": [
+            "185.220.101.45"
+          ],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [
+          "T1110"
+        ],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "authentication",
+        "rule_id": "5712",
+        "endpoint_name": "web-prod",
+        "indicator_keys": [
+          "source_ip",
+          "username"
+        ],
+        "indicator_values": {
+          "source_ip": "185.220.101.45",
+          "username": "root"
+        },
+        "module_context_keys": [
+          "authentication_result",
+          "source_ip",
+          "username"
+        ],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "c2_beacon_cn_geo",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "t1071",
+        "china",
+        "isolate"
+      ],
+      "rule_id": "61631",
+      "rule_level": 9,
+      "agent_name": "win-finance",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "Outbound connection to known C2 infrastructure.",
+        "native_severity": "9",
+        "asset_name": "win-finance",
+        "actor_user": "",
+        "source_ip": "10.0.5.20",
+        "destination_ip": "45.61.139.22",
+        "target_service": "",
+        "observables": {
+          "ips": [
+            "10.0.5.20",
+            "45.61.139.22"
+          ],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [
+          "T1071.001"
+        ],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "61631",
+        "endpoint_name": "win-finance",
+        "indicator_keys": [
+          "destination_ip",
+          "source_ip"
+        ],
+        "indicator_values": {
+          "source_ip": "10.0.5.20",
+          "destination_ip": "45.61.139.22"
+        },
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "powershell_obf_mitre",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "t1059",
+        "powershell",
+        "obfuscation"
+      ],
+      "rule_id": "91802",
+      "rule_level": 11,
+      "agent_name": "win-finance",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "PowerShell obfuscated script block detected.",
+        "native_severity": "11",
+        "asset_name": "win-finance",
+        "actor_user": "",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [
+          "T1059.001",
+          "T1027"
+        ],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "91802",
+        "endpoint_name": "win-finance",
+        "indicator_keys": [],
+        "indicator_values": {},
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "pos_sudo_offhours_with_profile",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "sudo",
+        "bob",
+        "off-hours"
+      ],
+      "rule_id": "5402",
+      "rule_level": 3,
+      "agent_name": "test-pos-store-01",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "authentication.bruteforce",
+        "title": "Successful sudo to ROOT executed.",
+        "native_severity": "3",
+        "asset_name": "test-pos-store-01",
+        "actor_user": "bob",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "authentication",
+        "rule_id": "5402",
+        "endpoint_name": "test-pos-store-01",
+        "indicator_keys": [
+          "username"
+        ],
+        "indicator_values": {
+          "username": "bob"
+        },
+        "module_context_keys": [
+          "username"
+        ],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "win_sysmon_alice_psh_profile",
+      "human_expected_severity": "critical",
+      "human_expected_keywords": [
+        "alice",
+        "powershell",
+        "pci"
+      ],
+      "rule_id": "92020",
+      "rule_level": 11,
+      "agent_name": "new-agent-99",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "endpoint.windows_event",
+        "title": "Suspicious PowerShell on critical asset.",
+        "native_severity": "11",
+        "asset_name": "new-agent-99",
+        "actor_user": "alice",
+        "source_ip": "",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [],
+          "domains": [],
+          "hashes": [],
+          "files": [
+            "C:\\\\Windows\\\\System32\\\\powershell.exe"
+          ],
+          "processes": [
+            "C:\\\\Windows\\\\System32\\\\powershell.exe"
+          ],
+          "commands": []
+        },
+        "mitre": [
+          "T1059.001"
+        ],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule",
+          "win"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "windows",
+        "rule_id": "92020",
+        "endpoint_name": "new-agent-99",
+        "indicator_keys": [
+          "process",
+          "username"
+        ],
+        "indicator_values": {
+          "username": "alice",
+          "process": "C:\\\\Windows\\\\System32\\\\powershell.exe"
+        },
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    },
+    {
+      "case_id": "web_prod_sqli_with_profile",
+      "human_expected_severity": "high",
+      "human_expected_keywords": [
+        "sql injection",
+        "block",
+        "10.0.0.7"
+      ],
+      "rule_id": "31103",
+      "rule_level": 11,
+      "agent_name": "web-prod-99",
+      "canonical": {
+        "source": "wazuh",
+        "source_product": "wazuh",
+        "signal_type": "security.alert",
+        "title": "SQL injection attempt.",
+        "native_severity": "11",
+        "asset_name": "web-prod-99",
+        "actor_user": "",
+        "source_ip": "10.0.0.7",
+        "destination_ip": "",
+        "target_service": "",
+        "observables": {
+          "ips": [
+            "10.0.0.7"
+          ],
+          "domains": [],
+          "hashes": [],
+          "files": [],
+          "processes": [],
+          "commands": []
+        },
+        "mitre": [],
+        "rule_groups": [],
+        "source_specific_keys": [
+          "rule"
+        ]
+      },
+      "technical_evidence": {
+        "source": "wazuh",
+        "module": "other",
+        "rule_id": "31103",
+        "endpoint_name": "web-prod-99",
+        "indicator_keys": [
+          "source_ip"
+        ],
+        "indicator_values": {
+          "source_ip": "10.0.0.7"
+        },
+        "module_context_keys": [],
+        "raw_log_present": true
+      }
+    }
+  ]
+}

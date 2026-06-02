@@ -10,7 +10,9 @@ internal shape already used by the LLM, DB, Slack, and dashboard:
     full_log: str
 
 Wazuh keeps passing through as-is. Other SIEMs can be added here without
-touching the worker queue, prompting, persistence, or owner UI.
+touching the worker queue, persistence, or owner UI. Stage-1 prompting now
+projects this compatibility envelope into `canonical_signal` before building
+the LLM prompt.
 """
 from __future__ import annotations
 
@@ -25,6 +27,10 @@ SOURCE_LABELS = {
     "elastic": "Elastic Security",
     "sentinel": "Microsoft Sentinel",
     "qradar": "IBM QRadar",
+    "google_workspace": "Google Workspace",
+    "microsoft_365": "Microsoft 365",
+    "firewall": "Firewall / Edge",
+    "edr": "EDR",
 }
 
 SEVERITY_TO_LEVEL = {
@@ -42,12 +48,17 @@ SEVERITY_TO_LEVEL = {
 
 
 def _source_key(value: str | None) -> str:
-    key = (value or "auto").strip().lower().replace("_", "-")
+    key = (value or "auto").strip().lower().replace("-", "_")
     aliases = {
-        "ms-sentinel": "sentinel",
-        "microsoft-sentinel": "sentinel",
-        "elastic-security": "elastic",
-        "generic-siem": "generic",
+        "ms_sentinel": "sentinel",
+        "microsoft_sentinel": "sentinel",
+        "elastic_security": "elastic",
+        "generic_siem": "generic",
+        "m365": "microsoft_365",
+        "o365": "microsoft_365",
+        "office_365": "microsoft_365",
+        "google": "google_workspace",
+        "gworkspace": "google_workspace",
     }
     return aliases.get(key, key)
 
@@ -84,8 +95,9 @@ def detect_source(payload: dict[str, Any]) -> str:
         or "full_log" in payload
     ):
         return "wazuh"
-    if payload.get("source") in SOURCE_LABELS:
-        return _source_key(str(payload.get("source")))
+    source_value = payload.get("source")
+    if isinstance(source_value, str) and _source_key(source_value) in SOURCE_LABELS:
+        return _source_key(source_value)
     if payload.get("sourcetype") or payload.get("index"):
         return "splunk"
     if payload.get("@timestamp") and payload.get("event"):
@@ -107,7 +119,10 @@ def normalize_alert(payload: dict[str, Any], source_hint: str = "auto") -> dict[
     if not isinstance(payload, dict):
         raise ValueError("alert payload must be a JSON object")
 
-    source = detect_source(payload) if _source_key(source_hint) == "auto" else _source_key(source_hint)
+    hint = _source_key(source_hint)
+    source = detect_source(payload) if hint == "auto" else hint
+    if source not in SOURCE_LABELS:
+        raise ValueError(f"unsupported SIEM source: {source_hint}")
     if source == "wazuh":
         alert = dict(payload)
         alert.setdefault("rule", {})

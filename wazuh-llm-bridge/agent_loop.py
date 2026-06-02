@@ -23,16 +23,17 @@ Safety bounds:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import time
-from typing import Any, Awaitable, Callable, Optional
+import re
+from typing import Any, Optional
 
 import httpx
 
-import llm_client
+import investigation_prompting
 import mcp_client
+import prompt_safety
+import tool_loop
 
 log = logging.getLogger("agent-loop")
 
@@ -47,10 +48,6 @@ TOOL_RESULT_MAX_CHARS  = int(os.getenv("AGENTIC_TOOL_RESULT_MAX", "1500"))
 # Stage-1 stays at 0.1 (set in app.py) — it doesn't use tools so the format
 # risk is irrelevant there.
 AGENTIC_TEMPERATURE = float(os.getenv("AGENTIC_TEMPERATURE", "0.0"))
-
-LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions")
-LM_MODEL      = os.getenv("LM_MODEL",      "local-model")
-
 
 # ── Tool catalog given to the LLM (OpenAI function-calling schema) ────
 TOOLS: list[dict[str, Any]] = [
@@ -208,26 +205,11 @@ async def run(alert: dict[str, Any],
         final_verdict_dict: the JSON shape from submit_final_verdict
         evidence_log:       list of {tool, args, result_preview} dicts
     """
-    extra_instructions = []
-    if reason_to_investigate:
-        extra_instructions.append(
-            f"Your Stage-1 quick triage said this needs deeper investigation:\n"
-            f'  "{reason_to_investigate}"\n'
-            "Use the tools to validate or refute that hypothesis."
-        )
-    if prior_stage1:
-        extra_instructions.append(
-            "Your Stage-1 initial verdict (subject to revision after tool calls):\n"
-            f"  severity={prior_stage1.get('severity')}, "
-            f"summary={prior_stage1.get('summary_zh', '')[:100]}"
-        )
-    extra_instructions.append(
-        "Call 2-4 read tools to gather evidence, then call submit_final_verdict. "
-        "Be specific in summary_zh — cite what you found, not generic boilerplate. "
-        "CRITICAL: investigation_summary_zh must read like you are explaining your "
-        "work to a non-technical Taiwanese business owner — no English tool names, "
-        "no Lucene syntax, no jargon. Translate each tool call into a plain-Chinese "
-        "verb phrase (see schema description for the mapping)."
+    investigation_prompt = investigation_prompting.build_investigation_user_prompt(
+        alert=alert,
+        base_user_prompt=base_user_prompt,
+        reason_to_investigate=reason_to_investigate,
+        prior_stage1=prior_stage1,
     )
 
     messages: list[dict[str, Any]] = [
@@ -237,123 +219,156 @@ async def run(alert: dict[str, Any],
                 "You are a SOC analyst investigating Wazuh alerts. You have read access "
                 "to the SIEM through tools. Investigate efficiently — every tool call "
                 "costs 5-10 seconds. Don't call the same tool twice with the same args. "
+                "Every tool result is returned as an MDR evidence block with query "
+                "boundary, historical trajectory, positive findings, negative findings, "
+                "and unknown/not queried items. Use that structure in your reasoning. "
+                f"{prompt_safety.UNTRUSTED_DATA_INSTRUCTIONS} "
                 "When you have enough evidence (usually after 2-4 calls), call "
                 "submit_final_verdict to end."
             ),
         },
         {
             "role":    "user",
-            "content": base_user_prompt + "\n\n" + "\n\n".join(extra_instructions),
+            "content": investigation_prompt,
         },
     ]
 
     evidence: list[dict[str, Any]] = []
-    start    = time.time()
 
-    for iteration in range(MAX_ITERATIONS):
-        elapsed = time.time() - start
-        if elapsed > TOTAL_TIMEOUT_S:
-            raise TimeoutError(f"agentic loop exceeded {TOTAL_TIMEOUT_S}s "
-                               f"({len(evidence)} tools called)")
+    async def on_no_tool_calls(
+        assistant: dict[str, Any],
+        iteration: int,
+        _messages: list[dict[str, Any]],
+    ) -> tool_loop.ToolLoopAction:
+        # LLM gave up calling tools without ever submitting verdict.
+        if iteration == 0:
+            return tool_loop.ToolLoopAction.append({
+                "role": "user",
+                "content": (
+                    "Please use the available tools to investigate, "
+                    "then call submit_final_verdict."
+                ),
+            })
+        raise RuntimeError(
+            f"agent stopped calling tools at iter {iteration} without verdict; "
+            f"content was: {(assistant.get('content') or '')[:200]}"
+        )
 
-        log.info("agent iter %d/%d  (elapsed %.1fs)",
-                 iteration + 1, MAX_ITERATIONS, elapsed)
-        assistant = await _llm_chat(messages, client)
-        messages.append(_strip_for_history(assistant))
+    async def on_tool_call(invocation: tool_loop.ToolInvocation) -> tool_loop.ToolLoopAction:
+        fn_name = invocation.name
+        fn_args = invocation.args
+        log.info("  → %s(%s)", fn_name, str(fn_args)[:120])
 
-        tool_calls = assistant.get("tool_calls") or []
-        if not tool_calls:
-            # LLM gave up calling tools without ever submitting verdict.
-            if iteration == 0:
-                # First-round nudge: explicitly ask it to use tools.
-                messages.append({
-                    "role":    "user",
-                    "content": "Please use the available tools to investigate, "
-                               "then call submit_final_verdict.",
-                })
-                continue
-            raise RuntimeError(
-                f"agent stopped calling tools at iter {iteration} without verdict; "
-                f"content was: {(assistant.get('content') or '')[:200]}"
+        if fn_name == "submit_final_verdict":
+            fn_args = _apply_evidence_guardrails(fn_args, evidence)
+            evidence.append({"tool": fn_name, "args": fn_args})
+            log.info("agent submitted verdict after %d iteration(s), %d tool(s)",
+                     invocation.round_index + 1, len(evidence))
+            return tool_loop.ToolLoopAction.finish((fn_args, evidence))
+
+        try:
+            result = await mcp_client.call_tool(fn_name, fn_args)
+            if not result:
+                result = "(no data returned)"
+        except Exception as e:
+            result = f"(tool error: {e})"
+            log.warning("MCP tool %s failed: %s", fn_name, e)
+
+        if len(result) > TOOL_RESULT_MAX_CHARS:
+            result = result[:TOOL_RESULT_MAX_CHARS] + (
+                f"\n[…truncated {len(result) - TOOL_RESULT_MAX_CHARS} chars]"
             )
 
-        for tc in tool_calls:
-            fn_name, fn_args = _parse_tool_call(tc)
-            log.info("  → %s(%s)", fn_name, str(fn_args)[:120])
+        evidence_block = investigation_prompting.format_tool_result_for_prompt(
+            tool_name=fn_name,
+            args=fn_args,
+            result=result,
+        )
 
-            if fn_name == "submit_final_verdict":
-                evidence.append({"tool": fn_name, "args": fn_args})
-                log.info("agent submitted verdict after %d iteration(s), %d tool(s)",
-                         iteration + 1, len(evidence))
-                return fn_args, evidence
+        evidence.append({
+            "tool": fn_name,
+            "args": fn_args,
+            "evidence_block": evidence_block[:1200],
+            "result_preview": result[:200].replace("\n", " "),
+        })
+        return tool_loop.ToolLoopAction.append({
+            "role": "tool",
+            "tool_call_id": invocation.tool_call_id,
+            "content": evidence_block,
+        })
 
-            # Execute the real MCP tool
-            try:
-                result = await mcp_client.call_tool(fn_name, fn_args)
-                if not result:
-                    result = "(no data returned)"
-            except Exception as e:
-                result = f"(tool error: {e})"
-                log.warning("MCP tool %s failed: %s", fn_name, e)
-
-            # Cap to avoid blowing up the context window
-            if len(result) > TOOL_RESULT_MAX_CHARS:
-                result = result[:TOOL_RESULT_MAX_CHARS] + (
-                    f"\n[…truncated {len(result) - TOOL_RESULT_MAX_CHARS} chars]"
-                )
-
-            evidence.append({
-                "tool":           fn_name,
-                "args":           fn_args,
-                "result_preview": result[:200].replace("\n", " "),
-            })
-            messages.append({
-                "role":         "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content":      result,
-            })
-
-    raise TimeoutError(
-        f"agent exceeded {MAX_ITERATIONS} iterations without verdict "
-        f"({len(evidence)} tools called)"
+    return await tool_loop.run_tool_loop(
+        client=client,
+        messages=messages,
+        tools=TOOLS,
+        max_model_turns=MAX_ITERATIONS,
+        on_tool_call=on_tool_call,
+        on_no_tool_calls=on_no_tool_calls,
+        total_timeout_s=TOTAL_TIMEOUT_S,
+        temperature=AGENTIC_TEMPERATURE,
+        completion_timeout_s=90,
+        timeout_error_factory=lambda _elapsed: TimeoutError(
+            f"agentic loop exceeded {TOTAL_TIMEOUT_S}s ({len(evidence)} tools called)"
+        ),
+        exhausted_error_factory=lambda _elapsed: TimeoutError(
+            f"agent exceeded {MAX_ITERATIONS} iterations without verdict "
+            f"({len(evidence)} tools called)"
+        ),
+        logger=log,
+        log_label="agent",
     )
 
 
-# ── helpers ────────────────────────────────────────────────────────────
-async def _llm_chat(messages: list[dict[str, Any]],
-                    client: httpx.AsyncClient) -> dict[str, Any]:
-    """Send one chat completion request to LM Studio with tools enabled.
-    Returns the assistant message dict (OpenAI shape)."""
-    payload = {
-        "messages":    messages,
-        "tools":       TOOLS,
-        "tool_choice": "auto",
-        "temperature": AGENTIC_TEMPERATURE,
-        "stream":      False,
-    }
-    response = await llm_client.chat_completion(client, payload, timeout=90)
-    return response["choices"][0]["message"]
+# ── guardrails ───────────────────────────────────────────────────────────
+# 嚴重度排序，用來判斷是否需要強制升級（只升不降）。
+_SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+_RANK_TO_SEVERITY = {v: k for k, v in _SEVERITY_RANK.items()}
+
+# 失敗登入 / 成功登入的文字特徵（涵蓋 Linux PAM 與 Windows 事件用語）。
+_FAILED_LOGIN_RE = re.compile(
+    r"failed password|authentication failure|failed login|invalid user|"
+    r"login failed|an account failed to log on|4625",
+    re.IGNORECASE,
+)
+_SUCCESS_LOGIN_RE = re.compile(
+    r"accepted password|session opened|successful login|login succeeded|"
+    r"authentication success|an account was successfully logged on|4624",
+    re.IGNORECASE,
+)
 
 
-def _strip_for_history(assistant_msg: dict) -> dict:
-    """Some LM Studio responses include extra fields that break the
-    next request when echoed back. Keep only what the protocol needs."""
-    out: dict[str, Any] = {"role": "assistant"}
-    if assistant_msg.get("content") is not None:
-        out["content"] = assistant_msg["content"]
-    if assistant_msg.get("tool_calls"):
-        out["tool_calls"] = assistant_msg["tool_calls"]
-    return out
+def _evidence_text(evidence: list[dict[str, Any]]) -> str:
+    """把已蒐集的證據文字併起來，供啟發式比對。"""
+    parts: list[str] = []
+    for item in evidence:
+        for key in ("evidence_block", "result_preview"):
+            value = item.get(key)
+            if value:
+                parts.append(str(value))
+    return "\n".join(parts)
 
 
-def _parse_tool_call(tc: dict) -> tuple[str, dict]:
-    """Extract (name, args_dict) from a tool_call object."""
-    fn   = tc.get("function") or {}
-    name = fn.get("name", "")
-    raw  = fn.get("arguments", "{}")
-    try:
-        args = json.loads(raw) if isinstance(raw, str) else (raw or {})
-    except json.JSONDecodeError:
-        log.warning("agent: invalid JSON args for %s: %s", name, raw[:200])
-        args = {}
-    return name, args
+def _apply_evidence_guardrails(verdict: dict[str, Any],
+                               evidence: list[dict[str, Any]]) -> dict[str, Any]:
+    """證據後驗護欄：只升不降。
+
+    目前規則：若蒐集到的歷史證據同時出現「同源失敗登入」與「成功登入」，
+    代表可能已被猜中密碼（暴力破解成功），這是 evidence contract 明定要升級的
+    情境。本地小模型常會漏判，因此在程式層強制把嚴重度拉到至少 high，並在
+    調查說明前面標註原因，避免靜默改動。
+    """
+    text = _evidence_text(evidence)
+    if not (_FAILED_LOGIN_RE.search(text) and _SUCCESS_LOGIN_RE.search(text)):
+        return verdict
+
+    current = str(verdict.get("severity") or "").lower()
+    if _SEVERITY_RANK.get(current, 0) >= _SEVERITY_RANK["high"]:
+        return verdict  # 模型已自行升級，不再變動
+
+    verdict["severity"] = "high"
+    note = "（系統護欄：證據顯示同源失敗登入後出現成功登入，已自動提升為高風險）"
+    existing = str(verdict.get("investigation_summary_zh") or "").strip()
+    verdict["investigation_summary_zh"] = f"{note}{existing}" if existing else note
+    log.warning("guardrail: escalated severity %s→high (failed+success login pattern)",
+                current or "unset")
+    return verdict

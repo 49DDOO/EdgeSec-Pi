@@ -238,7 +238,11 @@ def save(values: dict[str, Any]) -> dict[str, Any]:
         store["enabled"] = bool(values.get("enabled"))
     _write_store(store)
     result = load()
-    result["message"] = "模型設定已儲存，尚未切換使用" if provider != store["active_provider"] else "目前使用模型設定已儲存"
+    result["message"] = (
+        "模型設定已儲存，尚未切換使用"
+        if provider != store["active_provider"]
+        else "目前使用模型設定已儲存，新告警會立即使用，不需重新啟動"
+    )
     return result
 
 
@@ -250,5 +254,5 @@ def use_provider(provider: str) -> dict[str, Any]:
     store["active_provider"] = provider
     _write_store(store)
     result = load()
-    result["message"] = f"已切換使用 {PROVIDERS[provider]['label_zh']}"
+    result["message"] = f"已切換使用 {PROVIDERS[provider]['label_zh']}，新告警會立即套用，不需重新啟動"
     return result

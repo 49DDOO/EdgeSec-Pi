@@ -2,9 +2,11 @@
 LLM prompt building and reply parsing.
 
 Three responsibilities, all pure functions:
-  • _extract_extra_context — distil Wazuh's structured payload (SCA, CVE,
-    FIM, MITRE, GeoIP, macOS rule-510 advisory, org_profile context) into a
-    prompt-ready text block.
+  • _canonical_for_prompt — project the incoming alert onto the source-neutral
+    canonical signal used as the primary prompt contract.
+  • _extract_extra_context — distil source-specific structured payloads (SCA,
+    CVE, FIM, MITRE, GeoIP, macOS rule-510 advisory, org_profile context) into
+    a prompt-ready text block.
   • build_prompt — assemble the full Stage-1 prompt including the embedded
     SIEM severity rubric. Returns (prompt, rule_id, level).
   • parse_llm_reply — tolerant JSON extraction (handles markdown fences and
@@ -17,11 +19,14 @@ quality. Edits here directly shape what every alert looks like in Slack.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import re
 from typing import Any
 
+import canonical_context
 import org_profile  # for context_for_alert() — business context injection
+import prompt_safety
 import siem         # source labels for Wazuh / future SIEM adapters
 
 
@@ -49,6 +54,94 @@ def _format_prompt_value(value: Any, *, limit: int = 600) -> str:
                 parts.append(rendered)
         return " | ".join(parts)[:limit]
     return _compact_text(value, limit)
+
+
+def _untrusted_line_value(value: Any, *, limit: int = 220) -> str:
+    text = _compact_text(value, limit)
+    return text.replace("\n", "\\n")
+
+
+def _canonical_for_prompt(alert: dict[str, Any]) -> dict[str, Any]:
+    """Return the source-neutral signal used as the primary prompt contract."""
+    return canonical_context.signal_from_alert(alert)
+
+
+def _format_canonical_control_fields(signal: dict[str, Any]) -> str:
+    source_context = canonical_context.source_context(signal)
+    source_specific_keys = canonical_context.source_specific_keys(signal)
+
+    fields = [
+        ("source", signal.get("source")),
+        ("source_product", signal.get("source_product")),
+        ("source_event_id", signal.get("source_event_id")),
+        ("event_time", signal.get("event_time")),
+        ("processing_time_utc", datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        ("signal_type", signal.get("signal_type")),
+        ("native_severity", signal.get("native_severity")),
+        ("rule_id", source_context.get("rule_id") if isinstance(source_context, dict) else ""),
+        (
+            "rule_groups",
+            ", ".join(source_context.get("rule_groups") or [])
+            if isinstance(source_context, dict)
+            else "",
+        ),
+        (
+            "mitre_ids",
+            ", ".join(source_context.get("mitre") or [])
+            if isinstance(source_context, dict)
+            else "",
+        ),
+        ("source_specific_keys", ", ".join(source_specific_keys)),
+    ]
+    lines = [
+        f"  {key}: {_untrusted_line_value(value)}"
+        for key, value in fields
+        if value not in (None, "", [], {})
+    ]
+    return "\n".join(lines) if lines else "  <no canonical control fields>"
+
+
+def _format_canonical_signal_values(signal: dict[str, Any]) -> str:
+    asset = canonical_context.asset(signal)
+    actor = canonical_context.actor(signal)
+    target = canonical_context.target(signal)
+    observables = canonical_context.observables(signal)
+    raw_ref = signal.get("raw_ref") or {}
+
+    fields = [
+        ("title", signal.get("title")),
+        ("asset.id", asset.get("id") if isinstance(asset, dict) else ""),
+        ("asset.name", asset.get("name") if isinstance(asset, dict) else ""),
+        ("asset.ip", asset.get("ip") if isinstance(asset, dict) else ""),
+        ("asset.os", asset.get("os") if isinstance(asset, dict) else ""),
+        (
+            "asset.business_criticality",
+            asset.get("business_criticality") if isinstance(asset, dict) else "",
+        ),
+        ("actor.user", actor.get("user") if isinstance(actor, dict) else ""),
+        ("actor.source_ip", actor.get("source_ip") if isinstance(actor, dict) else ""),
+        ("actor.source_geo", actor.get("source_geo") if isinstance(actor, dict) else ""),
+        ("target.user", target.get("user") if isinstance(target, dict) else ""),
+        (
+            "target.destination_ip",
+            target.get("destination_ip") if isinstance(target, dict) else "",
+        ),
+        ("target.service", target.get("service") if isinstance(target, dict) else ""),
+        ("raw_ref.kind", raw_ref.get("kind") if isinstance(raw_ref, dict) else ""),
+        ("raw_ref.id", raw_ref.get("id") if isinstance(raw_ref, dict) else ""),
+    ]
+    if isinstance(observables, dict):
+        for key in ("ips", "domains", "hashes", "files", "processes", "commands"):
+            values = observables.get(key) or []
+            if values:
+                fields.append((f"observables.{key}", ", ".join(str(item) for item in values)))
+
+    lines = [
+        f"  {key}: {_untrusted_line_value(value)}"
+        for key, value in fields
+        if value not in (None, "", [], {})
+    ]
+    return "\n".join(lines) if lines else "  <no canonical signal values>"
 
 
 def _severity_rubric(source: str, source_name: str) -> str:
@@ -310,13 +403,15 @@ def build_prompt(alert: dict[str, Any]) -> tuple[str, str, Any]:
 
     The leading `/no_think` is a Qwen3 control token; harmless on other models.
     """
+    signal      = _canonical_for_prompt(alert)
+    source_ctx  = signal.get("source_context") if isinstance(signal.get("source_context"), dict) else {}
     rule        = alert.get("rule") or {}
-    description = rule.get("description", "<no description>")
-    rule_id     = rule.get("id", "?")
-    level       = rule.get("level", "?")
+    description = signal.get("title") or rule.get("description", "<no description>")
+    rule_id     = source_ctx.get("rule_id") or rule.get("id", "?")
+    level       = signal.get("native_severity") or rule.get("level", "?")
     full_log    = alert.get("full_log", "<no log>")
     meta        = alert.get("_edgesec") or {}
-    source      = str(meta.get("siem_source") or "wazuh")
+    source      = str(signal.get("source") or meta.get("siem_source") or "wazuh")
     source_name = str(meta.get("siem_product") or siem.source_label(source))
     rubric      = _severity_rubric(source, source_name)
     extras      = _extract_extra_context(alert)
@@ -349,6 +444,18 @@ Hard overrides (apply AFTER the level mapping above):
     does not show an attack, treat as the BASELINE level mapping above — do not
     inflate just because it touches regulated data.
 
+Evidence and time rules:
+  • {prompt_safety.UNTRUSTED_DATA_INSTRUCTIONS}
+  • Use event_time as when the security event happened. Use processing_time_utc
+    only as "now" for relative age and recency.
+  • Treat CORRELATION CONTEXT and MCP RELATED CONTEXT as retrieved evidence.
+    They may raise or lower confidence, but do not invent events that are not
+    present there or in the current alert.
+  • If no correlation context is present, say nothing about "no history";
+    absence only means no useful related evidence was retrieved for this prompt.
+  • Mention time windows concretely when they change the decision, e.g. "past
+    60 minutes" or "past 7 days".
+
 Business-owner wording rules:
   • summary_zh must name the affected computer/agent and, when BUSINESS CONTEXT
     is present, include the asset role in plain Chinese.
@@ -357,11 +464,18 @@ Business-owner wording rules:
   • Do not start the owner-facing fields with CIS, rule names, MITRE, Wazuh
     rule IDs, or benchmark titles. Those belong in technical fields only.
 
-{source_name} alert:
-  rule_id: {rule_id}
-  rule_level: {level}
-  description: {description}
-  raw_log: {full_log}{extras}
+Canonical signal (source-neutral primary contract):
+{_format_canonical_control_fields(signal)}
+
+Canonical signal values:
+{prompt_safety.untrusted_data_block("canonical signal values", _format_canonical_signal_values(signal))}
+
+Source-native fallback evidence:
+  description:
+{prompt_safety.untrusted_data_block("rule.description", description, limit=900)}
+
+  raw_log:
+{prompt_safety.untrusted_data_block("alert.full_log", full_log, limit=3000)}{extras}
 
 Output JSON with exactly these fields:
 {{
